@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +25,11 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	st := store.NewMemory()
+	return newRigWith(t, store.NewMemory())
+}
+
+func newRigWith(t *testing.T, st store.Store) *rig {
+	t.Helper()
 	a := New(st, "secret", []string{"*"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(func() {
@@ -329,16 +335,80 @@ func TestMissingStreamAheadCursorAndHead(t *testing.T) {
 	id := r.create()
 	r.append(id, `{"data":"one"}`)
 
-	// A cursor past the last seq replays from the start instead of waiting forever.
+	// A cursor past the last seq can only be bogus, so the stream starts at now
+	// instead of replaying everything.
 	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=99", nil)
 	defer cancel()
 	defer closeBody(resp)
-	if f := readFrame(t, br); f.id != "1" || f.data != "one" {
+	r.append(id, `{"data":"two"}`)
+	if f := readFrame(t, br); f.id != "2" || f.data != "two" {
 		t.Fatalf("ahead frame = %+v", f)
 	}
 
 	if resp := r.do("HEAD", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("HEAD = %d", resp.StatusCode)
+	}
+}
+
+func TestReplayPaging(t *testing.T) {
+	r := newRig(t)
+	id := r.create()
+
+	var body strings.Builder
+	body.WriteByte('[')
+	for i := range 450 {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		body.WriteString(`{"data":"x"}`)
+	}
+	body.WriteByte(']')
+	if seqs := r.append(id, body.String()); len(seqs) != 450 || seqs[449] != 450 {
+		t.Fatalf("seqs = %d entries", len(seqs))
+	}
+
+	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	defer cancel()
+	defer closeBody(resp)
+	for i := 1; i <= 450; i++ {
+		if f := readFrame(t, br); f.id != strconv.Itoa(i) {
+			t.Fatalf("frame %d has id %q", i, f.id)
+		}
+	}
+}
+
+// The only test that runs the HTTP layer against PostgreSQL, so the
+// pg_notify -> listener -> hub -> SSE chain is covered end to end.
+func TestPostgresEndToEnd(t *testing.T) {
+	dsn := os.Getenv("SSEFY_TEST_DB")
+	if dsn == "" {
+		t.Skip("set SSEFY_TEST_DB to run")
+	}
+	st, err := store.OpenPostgres(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newRigWith(t, st)
+
+	id := r.create()
+	r.append(id, `{"data":"one"}`)
+
+	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	defer cancel()
+	defer closeBody(resp)
+	if f := readFrame(t, br); f.id != "1" || f.data != "one" {
+		t.Fatalf("replay frame = %+v", f)
+	}
+
+	r.append(id, `{"data":"two"}`)
+	if f := readFrame(t, br); f.id != "2" || f.data != "two" {
+		t.Fatalf("live frame = %+v", f)
+	}
+
+	del := r.write("DELETE", "/v1/streams/"+id, "")
+	_ = del.Body.Close()
+	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusGone {
+		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
 }
 

@@ -31,6 +31,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown, `410` deleted |
 | `GET /v1/streams/{id}` | Open | SSE: replays, then streams live. `404` unknown, `410` deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
+| `GET /healthz` | Open | `200` when the store answers and notifications flow; `503` otherwise |
 | `GET /metrics` | Open | Prometheus text for this node |
 
 Stream IDs are 128 random bits. They are the only thing protecting reads, so treat an ID as a bearer token and keep it out of logs.
@@ -50,7 +51,7 @@ Deletion removes the events, append records and create keys; the id stays as a t
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
 - `Idempotency-Key` makes a retried push return the original seqs and deliver once. The same key with a different body is `422`.
 
-Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. A transient event must also fit one NOTIFY payload: about 7.8 KiB after JSON encoding. Push idempotency keys are per stream; create keys are global.
+Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. A transient event must also fit one NOTIFY payload: about 7.8 KiB after JSON encoding. Push idempotency keys are per stream; create keys are global, so producers sharing one server secret must namespace them (for example `billing:invoice-42`).
 
 ## Resuming
 
@@ -73,6 +74,8 @@ Settings come from the environment. `./.env` is loaded first when it exists, the
 | `SSEFY_DEV` | `false` |
 
 ## Metrics
+
+A node keeps answering `200` for 30 seconds after losing its LISTEN connection, so a reconnect blip does not pull it from the load balancer. After that it answers `503`: reads would still replay, but live events would never arrive.
 
 `GET /metrics` exposes the default Prometheus registry. It is open like reads; gate it at the proxy if the counters are sensitive.
 

@@ -55,7 +55,9 @@ type Store interface {
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
 	LastSeq(ctx context.Context, stream string) (int64, error)
 	Live(stream string) (<-chan Notice, func())
-	Ping(ctx context.Context) error
+	// Ready reports whether this node can serve: the database answers and,
+	// in postgres mode, notifications are flowing.
+	Ready(ctx context.Context) error
 	Close() error
 }
 

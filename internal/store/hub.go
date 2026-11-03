@@ -7,7 +7,8 @@ import (
 )
 
 // hub fans notices out to the readers attached to this process.
-// Sends never block: a slow reader catches up on its next poll.
+// Sends never block: a slow reader is disconnected when a stored wake-up
+// cannot be queued, and transient notices may be dropped.
 type hub struct {
 	mu sync.Mutex
 	m  map[string]map[chan Notice]struct{}

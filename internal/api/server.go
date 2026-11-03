@@ -92,8 +92,8 @@ func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	if err := s.store.Ping(ctx); err != nil {
-		s.fail(w, http.StatusServiceUnavailable, "store unavailable")
+	if err := s.store.Ready(ctx); err != nil {
+		s.fail(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
 	w.WriteHeader(http.StatusOK)

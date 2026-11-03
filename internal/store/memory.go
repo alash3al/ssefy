@@ -175,5 +175,5 @@ func (m *memory) Live(stream string) (<-chan Notice, func()) {
 	return m.hub.subscribe(stream)
 }
 
-func (m *memory) Ping(context.Context) error { return nil }
-func (m *memory) Close() error               { return nil }
+func (m *memory) Ready(context.Context) error { return nil }
+func (m *memory) Close() error                { return nil }

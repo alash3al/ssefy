@@ -13,6 +13,10 @@ func testLifecycle(t *testing.T, s Store) {
 	t.Helper()
 	ctx := context.Background()
 
+	if err := s.Ready(ctx); err != nil {
+		t.Fatalf("ready = %v", err)
+	}
+
 	id, err := s.Create(ctx, "")
 	if err != nil {
 		t.Fatal(err)

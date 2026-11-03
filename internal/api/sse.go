@@ -69,7 +69,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		after = n
 	}
 	if after > last {
-		after = 0 // defensive: never wait forever behind a bad cursor
+		// Only a bogus cursor gets here: ids are never reused, so a legitimate
+		// client cannot be ahead. Start at now instead of replaying everything.
+		after = last
 	}
 
 	rc := http.NewResponseController(w)

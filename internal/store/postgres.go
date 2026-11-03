@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"io/fs"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
+
+	"github.com/alash3al/ssefy/internal/metrics"
 )
 
 //go:embed migrations/*.sql
@@ -24,10 +29,17 @@ type postgres struct {
 	hub    *hub
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	listenerUp atomic.Bool
+	downSince  atomic.Int64 // unix nanos, 0 while the listener is up
 }
 
+// listenerGrace is how long a node keeps answering healthy after losing its
+// LISTEN connection, so a one-second blip does not pull it from the balancer.
+const listenerGrace = 30 * time.Second
+
 func OpenPostgres(ctx context.Context, dsn string) (Store, error) {
-	if err := migrate(dsn); err != nil {
+	if err := migrate(ctx, dsn); err != nil {
 		return nil, err
 	}
 	pool, err := pgxpool.New(ctx, dsn)
@@ -39,22 +51,36 @@ func OpenPostgres(ctx context.Context, dsn string) (Store, error) {
 		return nil, err
 	}
 	p := &postgres{pool: pool, hub: newHub()}
+	p.downSince.Store(time.Now().UnixNano())
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.listen()
 	return p, nil
 }
 
-func migrate(dsn string) error {
+// migrate runs goose under a PostgreSQL advisory lock, so two nodes starting
+// at once cannot apply the same migration twice.
+func migrate(ctx context.Context, dsn string) error {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	goose.SetBaseFS(migrations)
-	if err := goose.SetDialect("postgres"); err != nil {
+
+	fsys, err := fs.Sub(migrations, "migrations")
+	if err != nil {
 		return err
 	}
-	return goose.Up(db, "migrations")
+	sessionLocker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return err
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fsys,
+		goose.WithSessionLocker(sessionLocker))
+	if err != nil {
+		return err
+	}
+	_, err = provider.Up(ctx)
+	return err
 }
 
 func (p *postgres) Create(ctx context.Context, key string) (string, error) {
@@ -317,7 +343,30 @@ func (p *postgres) Live(stream string) (<-chan Notice, func()) {
 	return p.hub.subscribe(stream)
 }
 
-func (p *postgres) Ping(ctx context.Context) error { return p.pool.Ping(ctx) }
+func (p *postgres) Ready(ctx context.Context) error {
+	if err := p.pool.Ping(ctx); err != nil {
+		return err
+	}
+	if p.listenerUp.Load() {
+		return nil
+	}
+	if time.Since(time.Unix(0, p.downSince.Load())) < listenerGrace {
+		return nil
+	}
+	return errors.New("notifications are not flowing")
+}
+
+func (p *postgres) markListenerUp() {
+	p.downSince.Store(0)
+	p.listenerUp.Store(true)
+	metrics.ListenerUp.Set(1)
+}
+
+func (p *postgres) markListenerDown() {
+	p.downSince.CompareAndSwap(0, time.Now().UnixNano())
+	p.listenerUp.Store(false)
+	metrics.ListenerUp.Set(0)
+}
 
 func (p *postgres) Close() error {
 	p.cancel()
