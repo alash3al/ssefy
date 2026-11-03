@@ -2,14 +2,16 @@ package store
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
 // memory is the development store: no PostgreSQL, one process.
 type memory struct {
-	mu      sync.Mutex
-	hub     *hub
-	streams map[string]*memStream
+	mu         sync.Mutex
+	hub        *hub
+	streams    map[string]*memStream
+	createKeys map[string]string
 }
 
 type memStream struct {
@@ -29,17 +31,29 @@ type memIdem struct {
 }
 
 func NewMemory() Store {
-	return &memory{hub: newHub(), streams: make(map[string]*memStream)}
+	return &memory{
+		hub:        newHub(),
+		streams:    make(map[string]*memStream),
+		createKeys: make(map[string]string),
+	}
 }
 
-func (m *memory) Create(context.Context) (string, error) {
+func (m *memory) Create(_ context.Context, key string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if key != "" {
+		if id, ok := m.createKeys[key]; ok {
+			return id, nil
+		}
+	}
 	id, err := newID()
 	if err != nil {
 		return "", err
 	}
-	m.mu.Lock()
 	m.streams[id] = &memStream{idem: make(map[string]memIdem)}
-	m.mu.Unlock()
+	if key != "" {
+		m.createKeys[key] = id
+	}
 	return id, nil
 }
 
@@ -118,15 +132,13 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	if !ok {
 		return nil, ErrNotFound
 	}
+	first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > after })
 	var out []Row
-	for _, e := range s.events {
-		if e.Row.Seq <= after {
-			continue
-		}
-		out = append(out, e.Row)
+	for _, e := range s.events[first:] {
 		if len(out) == limit {
 			break
 		}
+		out = append(out, e.Row)
 	}
 	return out, nil
 }

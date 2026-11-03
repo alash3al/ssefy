@@ -56,19 +56,29 @@ func migrate(dsn string) error {
 	return goose.Up(db, "migrations")
 }
 
-func (p *postgres) Create(ctx context.Context) (string, error) {
+func (p *postgres) Create(ctx context.Context, key string) (string, error) {
 	for range 3 {
 		id, err := newID()
 		if err != nil {
 			return "", err
 		}
-		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id) VALUES ($1)", id)
-		if err == nil {
-			return id, nil
-		}
-		if !isUnique(err) {
+		_, err = p.pool.Exec(ctx,
+			`INSERT INTO ssefy_streams (id, create_key) VALUES ($1, nullif($2, ''))
+			 ON CONFLICT (create_key) DO NOTHING`, id, key)
+		if err != nil {
+			if isUnique(err) {
+				continue // id collision
+			}
 			return "", err
 		}
+		if key == "" {
+			return id, nil
+		}
+		var existing string
+		if err := p.pool.QueryRow(ctx, "SELECT id FROM ssefy_streams WHERE create_key = $1", key).Scan(&existing); err != nil {
+			return "", err
+		}
+		return existing, nil
 	}
 	return "", errors.New("could not allocate a stream id")
 }

@@ -20,6 +20,13 @@ const (
 // stream replays stored events after the client's cursor, then follows live
 // ones until the client leaves, the stream is deleted, or the server stops.
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead {
+		// GET patterns also match HEAD; an endless body for HEAD would only
+		// pin a goroutine until the client gives up.
+		w.Header().Set("Allow", "GET")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	id := r.PathValue("id")
 	cursor := r.Header.Get("Last-Event-ID")
 	if cursor == "" {

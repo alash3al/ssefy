@@ -291,6 +291,48 @@ func TestNotFoundAndNow(t *testing.T) {
 	}
 }
 
+func TestCreateIsIdempotent(t *testing.T) {
+	r := newRig(t)
+	hdr := map[string]string{"Authorization": "Bearer secret", "Idempotency-Key": "make-1"}
+
+	first := r.do("POST", "/v1/streams", "", hdr)
+	defer closeBody(first)
+	var a struct{ ID string }
+	_ = json.NewDecoder(first.Body).Decode(&a)
+
+	second := r.do("POST", "/v1/streams", "", hdr)
+	defer closeBody(second)
+	var b struct{ ID string }
+	_ = json.NewDecoder(second.Body).Decode(&b)
+
+	if a.ID == "" || a.ID != b.ID {
+		t.Fatalf("ids = %q then %q", a.ID, b.ID)
+	}
+}
+
+func TestMissingStreamAheadCursorAndHead(t *testing.T) {
+	r := newRig(t)
+	missing := "00000000000000000000000000000000"
+	if resp := r.do("GET", "/v1/streams/"+missing, "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing stream = %d", resp.StatusCode)
+	}
+
+	id := r.create()
+	r.append(id, `{"data":"one"}`)
+
+	// A cursor past the last seq replays from the start instead of waiting forever.
+	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=99", nil)
+	defer cancel()
+	defer closeBody(resp)
+	if f := readFrame(t, br); f.id != "1" || f.data != "one" {
+		t.Fatalf("ahead frame = %+v", f)
+	}
+
+	if resp := r.do("HEAD", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("HEAD = %d", resp.StatusCode)
+	}
+}
+
 func TestFormatEventSplitsLines(t *testing.T) {
 	got := formatEvent(7, "message", "a\r\nb\rc")
 	want := "id: 7\nevent: message\ndata: a\ndata: b\ndata: c\n\n"

@@ -27,7 +27,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 
 | Call | Auth | Does |
 | --- | --- | --- |
-| `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"..."}` |
+| `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"..."}`. `Idempotency-Key` makes a retry return the same id |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` if the stream is gone |
 | `GET /v1/streams/{id}` | Open | SSE: replays, then streams live |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
@@ -47,7 +47,7 @@ Stream IDs are 128 random bits. They are the only thing protecting reads, so tre
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
 - `Idempotency-Key` makes a retried push return the original seqs and deliver once. The same key with a different body is `422`.
 
-Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys.
+Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. Push idempotency keys are per stream; create keys are global.
 
 ## Resuming
 

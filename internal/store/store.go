@@ -43,7 +43,9 @@ type Notice struct {
 // Store persists streams and wakes local readers. Append requires validated,
 // non-empty events; seqs are per stream, assigned in commit order, never reused.
 type Store interface {
-	Create(ctx context.Context) (string, error)
+	// Create mints a stream. A non-empty key makes a retried create return
+	// the same id instead of leaking an unreachable stream.
+	Create(ctx context.Context, key string) (string, error)
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
 	Delete(ctx context.Context, stream string) error
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
