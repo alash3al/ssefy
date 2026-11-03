@@ -5,6 +5,9 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func openTestPostgres(t *testing.T) Store {
@@ -68,5 +71,36 @@ func TestPostgresConcurrentSeqs(t *testing.T) {
 	}
 	if last, err := s.OpenReader(ctx, id, token); err != nil || last != writers*each {
 		t.Fatalf("last = %d, %v", last, err)
+	}
+}
+
+// Ready keeps answering healthy for listenerGrace after the listener drops,
+// then stops: a balancer only sees the failure once it is real. The grace
+// clock resets on every reconnect, so the integration suite's kill loop (a
+// hard flap, by construction) can never observe the 503 — the decision
+// itself is pinned here instead, deterministically.
+func TestReadyGrace(t *testing.T) {
+	dsn := os.Getenv("SSEFY_TEST_DB")
+	if dsn == "" {
+		t.Skip("set SSEFY_TEST_DB to run PostgreSQL tests")
+	}
+	pool, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	p := &postgres{pool: pool}
+
+	p.markListenerDown() // downSince starts now: inside the grace
+	if err := p.Ready(context.Background()); err != nil {
+		t.Fatalf("within grace = %v", err)
+	}
+	p.downSince.Store(time.Now().Add(-listenerGrace - time.Second).UnixNano())
+	if err := p.Ready(context.Background()); err == nil {
+		t.Fatal("past grace = healthy")
+	}
+	p.markListenerUp()
+	if err := p.Ready(context.Background()); err != nil {
+		t.Fatalf("listener up = %v", err)
 	}
 }

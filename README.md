@@ -147,4 +147,15 @@ ssefy already sends `X-Accel-Buffering: no` and a `: ping` comment every 15 seco
 go test ./...
 SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' \
   go test ./internal/store ./internal/api
+SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' \
+  go test ./internal/integration -timeout 5m
 ```
+
+The integration suite builds the binary and runs two nodes over one shared
+PostgreSQL, then breaks things on purpose: reconnects and replay-to-live
+transitions, ambiguous and simultaneous idempotent retries, partial batch-push
+failures, SIGKILLed processes, a terminated LISTEN connection (readers must
+catch up on everything stored, and a transient published while the node is
+deaf is lost), credential isolation across nodes, pagination under concurrent
+writes, trim under live readers, and a stalled reader that must be dropped
+rather than allowed to block publishers. It takes about a minute.
