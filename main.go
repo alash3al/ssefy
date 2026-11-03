@@ -28,6 +28,10 @@ func main() {
 	}
 }
 
+// version is stamped at build time by the release pipeline; local builds
+// report "dev".
+var version = "dev"
+
 func run(log *slog.Logger) error {
 	envFile := flag.String("env-file", "", "path to .env (default ./.env)")
 	flag.Parse()
@@ -61,7 +65,7 @@ func run(log *slog.Logger) error {
 
 	errs := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", cfg.Listen, "store", storeKind(cfg.Store))
+		log.Info("listening", "addr", cfg.Listen, "store", storeKind(cfg.Store), "version", version)
 		errs <- srv.ListenAndServe()
 	}()
 

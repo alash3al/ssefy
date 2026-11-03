@@ -1,0 +1,67 @@
+name: release
+
+# A published release builds the artifacts and attaches them to itself:
+# binaries for every platform with their checksums, and the multi-arch
+# image on GHCR. The release exists before this runs — create it with
+# gh release create, or on the GitHub releases page.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write # attach binaries to the release
+  packages: write # push the image to GHCR
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go test ./...
+
+      - name: build binaries
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for goos in linux darwin; do
+            for goarch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+                go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
+                -o "dist/ssefy-$goos-$goarch" .
+            done
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - name: attach binaries to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/*
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.event.release.tag_name }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.event.release.tag_name }}
+            ${{ env.IMAGE }}:latest

@@ -1,9 +1,14 @@
-FROM golang:1.27-alpine AS build
+# Cross-compile in the build stage: every target architecture builds natively
+# on the build platform, so multi-arch image builds stay fast.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /ssefy .
+ARG TARGETARCH
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOARCH=$TARGETARCH go build -trimpath \
+    -ldflags="-s -w -X main.version=$VERSION" -o /ssefy .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /ssefy /ssefy

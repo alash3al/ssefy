@@ -14,12 +14,15 @@ Push events from your backend, stream them to browsers over plain SSE, resume ex
 ## Try it
 
 ```sh
-docker build -t ssefy .
 docker run --rm -p 8080:8080 \
   -e SSEFY_SERVER_SECRET=dev-secret \
   -e SSEFY_STORE=memory:// \
-  ssefy
+  ghcr.io/alash3al/ssefy:latest
 ```
+
+The image is multi-arch (amd64, arm64) and every published release attaches
+binaries for linux and darwin with their `SHA256SUMS`; building from source
+is just `go build` or `docker build .`.
 
 `memory://` keeps everything in the process — fine for trying it, not for real use. Point `SSEFY_STORE` at PostgreSQL for that; the schema migrates itself at startup and ships inside the binary.
 
