@@ -67,7 +67,7 @@ Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255
 
 Flags: `--listen`, `--store`, `--secret`, `--cors`, `--dev`.
 
-The server speaks HTTP/1.1 and cleartext HTTP/2 on the same port, so browsers do not hit their six-connections-per-origin limit on HTTP/1.1.
+The server speaks HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port. Browsers only use HTTP/2 over TLS, so terminate TLS at the proxy and let it speak HTTP/2 to the browser; that is also what lifts the six-connections-per-origin limit on SSE. h2c here is for the proxy or a Go client.
 
 ## Tests
 

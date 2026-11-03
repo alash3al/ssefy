@@ -76,8 +76,9 @@ func main() {
 	}
 }
 
-// protocols serves HTTP/1.1 and cleartext HTTP/2 on the same port. TLS ends
-// at the proxy; browsers need HTTP/2 to avoid six connections per origin.
+// protocols serves HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port.
+// Browsers only use HTTP/2 over TLS, so they talk HTTP/2 to the proxy; h2c is
+// for Go clients and proxies that speak it upstream.
 func protocols() *http.Protocols {
 	p := new(http.Protocols)
 	p.SetHTTP1(true)
