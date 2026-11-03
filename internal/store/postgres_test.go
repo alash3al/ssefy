@@ -32,7 +32,7 @@ func TestPostgresConcurrentSeqs(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	ctx := context.Background()
-	id, err := s.Create(ctx, "")
+	id, err := s.Create(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

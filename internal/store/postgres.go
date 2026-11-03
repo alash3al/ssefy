@@ -83,10 +83,7 @@ func migrate(ctx context.Context, dsn string) error {
 	return err
 }
 
-func (p *postgres) Create(ctx context.Context, key string) (string, error) {
-	if key != "" {
-		return p.createWithKey(ctx, key)
-	}
+func (p *postgres) Create(ctx context.Context) (string, error) {
 	for range 3 {
 		id, err := newID()
 		if err != nil {
@@ -99,53 +96,6 @@ func (p *postgres) Create(ctx context.Context, key string) (string, error) {
 		if !isUnique(err) {
 			return "", err
 		}
-	}
-	return "", errors.New("could not allocate a stream id")
-}
-
-// createWithKey inserts the stream and its key atomically. When the key is
-// already taken the transaction rolls back, so no orphan stream is left.
-func (p *postgres) createWithKey(ctx context.Context, key string) (string, error) {
-	for range 3 {
-		id, err := newID()
-		if err != nil {
-			return "", err
-		}
-		tx, err := p.pool.Begin(ctx)
-		if err != nil {
-			return "", err
-		}
-		if _, err := tx.Exec(ctx, "INSERT INTO ssefy_streams (id) VALUES ($1)", id); err != nil {
-			_ = tx.Rollback(ctx)
-			if isUnique(err) {
-				continue
-			}
-			return "", err
-		}
-		tag, err := tx.Exec(ctx,
-			"INSERT INTO ssefy_create_keys (key, stream_id) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
-			key, id)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			return "", err
-		}
-		if tag.RowsAffected() == 1 {
-			if err := tx.Commit(ctx); err != nil {
-				return "", err
-			}
-			return id, nil
-		}
-		_ = tx.Rollback(ctx)
-
-		var existing string
-		err = p.pool.QueryRow(ctx, "SELECT stream_id FROM ssefy_create_keys WHERE key = $1", key).Scan(&existing)
-		if errors.Is(err, pgx.ErrNoRows) {
-			continue // the other create was deleted in between
-		}
-		if err != nil {
-			return "", err
-		}
-		return existing, nil
 	}
 	return "", errors.New("could not allocate a stream id")
 }
@@ -285,7 +235,7 @@ func (p *postgres) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	for _, table := range []string{"ssefy_events", "ssefy_appends", "ssefy_create_keys"} {
+	for _, table := range []string{"ssefy_events", "ssefy_appends"} {
 		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE stream_id = $1", id); err != nil {
 			return err
 		}

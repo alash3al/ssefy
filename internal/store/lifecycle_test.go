@@ -17,7 +17,7 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("ready = %v", err)
 	}
 
-	id, err := s.Create(ctx, "")
+	id, err := s.Create(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,22 +43,6 @@ func testLifecycle(t *testing.T, s Store) {
 	}
 	if last, err := s.LastSeq(ctx, id); err != nil || last != 2 {
 		t.Fatalf("last = %d, %v", last, err)
-	}
-
-	// A create key makes retries return the same stream instead of leaking one.
-	first, err := s.Create(ctx, "create-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := s.Create(ctx, "create-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Fatalf("keyed create = %q then %q", first, second)
-	}
-	if first == id {
-		t.Fatal("keyed create returned an unrelated stream")
 	}
 
 	// Idempotency: same key and body returns the original seqs, a different body fails.
@@ -153,17 +137,6 @@ func testLifecycle(t *testing.T, s Store) {
 	after, _ := s.Read(ctx, id, 0, 100)
 	if len(before) != len(after) {
 		t.Fatalf("transient event was stored: %d -> %d", len(before), len(after))
-	}
-
-	if err := s.Delete(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	third, err := s.Create(ctx, "create-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if third == first {
-		t.Fatal("create key was not released by delete")
 	}
 
 	if err := s.Delete(ctx, id); err != nil {

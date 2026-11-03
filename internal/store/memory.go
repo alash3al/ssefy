@@ -9,18 +9,16 @@ import (
 
 // memory is the development store: no PostgreSQL, one process.
 type memory struct {
-	mu         sync.Mutex
-	hub        *hub
-	streams    map[string]*memStream
-	createKeys map[string]string
-	deleted    map[string]struct{}
+	mu      sync.Mutex
+	hub     *hub
+	streams map[string]*memStream
+	deleted map[string]struct{}
 }
 
 type memStream struct {
-	createKey string
-	lastSeq   int64
-	events    []memEvent
-	idem      map[string]memIdem
+	lastSeq int64
+	events  []memEvent
+	idem    map[string]memIdem
 }
 
 type memEvent struct {
@@ -35,29 +33,20 @@ type memIdem struct {
 
 func NewMemory() Store {
 	return &memory{
-		hub:        newHub(),
-		streams:    make(map[string]*memStream),
-		createKeys: make(map[string]string),
-		deleted:    make(map[string]struct{}),
+		hub:     newHub(),
+		streams: make(map[string]*memStream),
+		deleted: make(map[string]struct{}),
 	}
 }
 
-func (m *memory) Create(_ context.Context, key string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if key != "" {
-		if id, ok := m.createKeys[key]; ok {
-			return id, nil
-		}
-	}
+func (m *memory) Create(context.Context) (string, error) {
 	id, err := newID()
 	if err != nil {
 		return "", err
 	}
-	m.streams[id] = &memStream{createKey: key, idem: make(map[string]memIdem)}
-	if key != "" {
-		m.createKeys[key] = id
-	}
+	m.mu.Lock()
+	m.streams[id] = &memStream{idem: make(map[string]memIdem)}
+	m.mu.Unlock()
 	return id, nil
 }
 
@@ -125,14 +114,9 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
-	s, ok := m.streams[id]
-	if ok {
-		delete(m.streams, id)
-		m.deleted[id] = struct{}{}
-		if s.createKey != "" {
-			delete(m.createKeys, s.createKey)
-		}
-	}
+	_, ok := m.streams[id]
+	delete(m.streams, id)
+	m.deleted[id] = struct{}{}
 	m.mu.Unlock()
 	if ok {
 		m.hub.close(id)

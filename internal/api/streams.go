@@ -23,12 +23,7 @@ const (
 )
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
-	key := r.Header.Get("Idempotency-Key")
-	if len(key) > maxKey {
-		s.fail(w, http.StatusBadRequest, fmt.Sprintf("Idempotency-Key longer than %d bytes", maxKey))
-		return
-	}
-	id, err := s.store.Create(r.Context(), key)
+	id, err := s.store.Create(r.Context())
 	if err != nil {
 		s.log.Error("create stream", "err", err)
 		s.fail(w, http.StatusInternalServerError, "could not create stream")
