@@ -1,52 +1,69 @@
 # ssefy
 
-One Go binary plus PostgreSQL. Backends append events to streams by ID; browsers read them over plain SSE and resume after any disconnect with `Last-Event-ID`.
+Push events from your backend, stream them to browsers over plain SSE, resume exactly where each client left off. One Go binary, PostgreSQL, nothing else to run.
 
-## Run
+## The model
+
+- A **stream** is an ordered, per-stream event log. Writes append; reads are SSE.
+- The **id** is a public, time-sortable UUIDv7 — only an address.
+- The **token** is a 128-bit secret that opens reads for one stream. Browsers pass it as `?token=` (EventSource cannot set headers); any other client may send `Authorization: Bearer <token>` instead.
+- The **server secret** guards writes and admin calls. Your backend holds it; browsers never see it.
+- Every stored event gets a per-stream **seq**, which is the SSE `id:`. A reconnect with `Last-Event-ID` gets exactly what it missed, nothing twice.
+- Nodes hold only open connections: run any number of them behind a plain load balancer.
+
+## Try it
 
 ```sh
 docker build -t ssefy .
 docker run --rm -p 8080:8080 \
-  -e SSEFY_SERVER_SECRET=change-me \
-  -e SSEFY_STORE='postgres://user:pass@host/db' \
+  -e SSEFY_SERVER_SECRET=dev-secret \
+  -e SSEFY_STORE=memory:// \
   ssefy
 ```
 
-Or from source:
+`memory://` keeps everything in the process — fine for trying it, not for real use. Point `SSEFY_STORE` at PostgreSQL for that; the schema migrates itself at startup and ships inside the binary.
 
 ```sh
-cp .env.example .env   # edit it
-./ssefy
+# create a stream
+curl -s -X POST -H 'Authorization: Bearer dev-secret' localhost:8080/v1/streams
+# {"id":"0190a2b4-…","token":"f0af9d2c…"}
+
+# append
+curl -s -X POST -H 'Authorization: Bearer dev-secret' \
+  -d '{"data":"hello"}' localhost:8080/v1/streams/$ID
+# {"seqs":[1]}
+
+# read it back
+curl -N 'localhost:8080/v1/streams/$ID?token=$TOKEN&after=0'
+# id: 1
+# event: message
+# data: hello
 ```
 
-`SSEFY_STORE=memory://` (the default) runs without PostgreSQL, for development only. Migrations run at startup.
-
-TLS is not handled here: terminate it at the proxy and point it at this port.
+In a browser: `new EventSource("/v1/streams/" + id + "?token=" + token)`.
 
 ## API
 
 | Call | Auth | Does |
 | --- | --- | --- |
-| `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
-| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown or deleted |
+| `POST /v1/streams` | Server secret | Creates a stream. `201 {"id","token"}` |
+| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[…]}`, `404` unknown or deleted |
 | `POST /v1/push` | Server secret | Appends the same events to up to 100 streams in one call |
-| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown or deleted |
+| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. `401` no or bad token, `404` unknown or deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Removes the stream and its events. `204`, also for an unknown id |
-| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}` — `readable` is `false` while revoked. `404` unknown or deleted |
-| `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |
+| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}` — `readable` is `false` while revoked |
+| `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token"}` |
 | `POST /v1/streams/{id}/revoke` | Server secret | Clears the token, closes readers. `204` |
-| `GET /healthz` | Open | `200` when the store answers and notifications flow; `503` otherwise |
+| `GET /healthz` | Open | `200` when the store answers and notifications flow |
 | `GET /metrics` | Open | Prometheus text for this node |
 
-An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token. EventSource cannot set headers, so browsers pass it as `?token=`; any other client may send `Authorization: Bearer <token>` instead. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
+**Batch push** takes `{"streams":[…],"events":…}` and answers per stream:
 
-`POST /v1/push` takes `{"streams":[…],"events":…}` and returns `{"results":{"<id>":{"seqs":[…]} | {"error":"…"}}}`. Streams are appended independently: one failure does not undo the others, so read the results. A retry with the same `Idempotency-Key` returns the original seqs for the streams that already succeeded and appends to the rest. Duplicate ids in one call are rejected.
+```json
+{"results": {"<id>": {"seqs": [1,2]}, "<id>": {"error": "stream not found"}}}
+```
 
-Tokens are stored only as a SHA-256 digest; create and rotate return the plaintext exactly once.
-
-Rotate, revoke and delete drop every reader. EventSource cannot change its URL, so after a rotate the host has to reopen it with the new token. Every reconnect without a working token gets `404`.
-
-Deletion removes the stream, its events and append records; later requests are `404`. A wrong token is `401`.
+Targets are independent — one failure undoes nothing — so read the results. A retry with the same `Idempotency-Key` returns the original seqs for streams that already succeeded and appends to the rest.
 
 ## Events
 
@@ -54,14 +71,13 @@ Deletion removes the stream, its events and append records; later requests are `
 {"event": "message", "data": "hello", "transient": false, "collapse_key": null}
 ```
 
+- `event` defaults to `message`; `data` is a string — encode JSON inside it when you need structure.
 - An array is stored in order, all or nothing.
-- `event` defaults to `message`.
-- `data` is a string. Encode JSON inside it when you need structure.
 - `transient` events are delivered live only, never stored, and carry no `id:`. A push is either all stored or all transient.
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
-- `Idempotency-Key` makes a retried push return the original seqs and deliver once; a retry's body is ignored.
+- `Idempotency-Key` (per stream) makes a retried push return the original seqs and deliver once; a retry's body is ignored.
 
-Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. A transient event must also fit one NOTIFY payload: about 7.8 KiB after JSON encoding. Idempotency keys are per stream.
+Limits: 1 MiB request body · 500 events per push · 64 KiB of `data` per event · 255-byte keys · a transient event must fit one NOTIFY payload, about 7.8 KiB after JSON encoding.
 
 ## Resuming
 
@@ -69,11 +85,18 @@ Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255
 - `?after=0`: replay everything.
 - `?after=now`: skip history.
 - `Last-Event-ID` wins over `?after`.
-- Deleted stream: open connections close, the next connect gets `404`; an unknown id gets `404`; a missing or wrong token gets `401`. EventSource stops reconnecting on any non-200.
+- A missing or wrong token is `401`; an unknown or deleted stream is `404`. EventSource stops reconnecting on any non-200.
+
+## Tokens
+
+- Stored only as a SHA-256 digest. Create and rotate return the plaintext exactly once — keep it.
+- In the URL it lands in proxy access logs. Strip query strings at the proxy, route browsers through your own gateway, or accept it.
+- Rotate, revoke and delete close every reader on every node. EventSource cannot change its URL, so after a rotate the host must reopen the connection with the new token; the old URL reconnects to `404` and stops.
+- No expiry by design: revoke is the off switch, rotate is the re-issue.
 
 ## Configuration
 
-Settings come from the environment. `./.env` is loaded first when it exists, then real environment variables win. Use `--env-file path` to load a different file; a missing explicit file is an error.
+Settings come from the environment. `./.env` is read first when it exists; real environment variables win. `--env-file path` loads a different file, and a missing explicit file is an error.
 
 | Setting | Default |
 | --- | --- |
@@ -83,24 +106,12 @@ Settings come from the environment. `./.env` is loaded first when it exists, the
 | `SSEFY_CORS_ORIGINS` | `*` with `SSEFY_DEV=true`, comma separated |
 | `SSEFY_DEV` | `false` |
 
-## Metrics
+## Operating
 
-A node keeps answering `200` for 30 seconds after losing its LISTEN connection, so a reconnect blip does not pull it from the load balancer. After that it answers `503`: reads would still replay, but live events would never arrive.
-
-`GET /metrics` exposes the default Prometheus registry. Like `/healthz` it is open — reads themselves need a token — so gate both at the proxy if that matters.
-
-- `ssefy_readers` — open SSE connections on this node.
-- `ssefy_events_appended_total{kind}` and `ssefy_events_delivered_total{kind}` — `stored` or `transient`.
-- `ssefy_event_delivery_lag_seconds` — commit to live delivery, after the initial replay.
-- `ssefy_http_requests_total{method,route,status}` and `ssefy_http_duration_seconds` — an SSE request's duration is the life of the connection.
-- `ssefy_notifications_total{kind}`, `ssefy_listener_up`, `ssefy_listener_reconnects_total`.
-- `ssefy_slow_readers_total`, `ssefy_transient_dropped_total`.
-
-## Behind a proxy
-
-Terminate TLS at the proxy. ssefy speaks HTTP/1.1, which every proxy handles; browsers still get HTTP/2 from the proxy, and that is what lifts their six-connections-per-origin limit on SSE.
-
-SSE needs buffering off and a read timeout longer than the 15s heartbeat:
+- `/healthz` answers `503` once a node has been without its LISTEN connection for 30 seconds: reads would still replay, but live events would never arrive. The 30s grace keeps a one-second blip from pulling the node off the balancer.
+- `/metrics` is open like `/healthz` — reads themselves need a token — so gate both at the proxy if that matters. Exported: `ssefy_readers`, `ssefy_events_appended_total{kind}`, `ssefy_events_delivered_total{kind}`, `ssefy_event_delivery_lag_seconds`, `ssefy_http_requests_total{method,route,status}`, `ssefy_http_duration_seconds`, `ssefy_notifications_total{kind}`, `ssefy_listener_up`, `ssefy_listener_reconnects_total`, `ssefy_slow_readers_total`, `ssefy_transient_dropped_total`, plus the Go and process collectors.
+- ssefy speaks HTTP/1.1. Terminate TLS at the proxy; browsers get HTTP/2 there, which is what lifts their six-connections-per-origin limit on SSE.
+- SSE needs buffering off and a read timeout above the 15s heartbeat:
 
 ```nginx
 location /v1/ {
@@ -112,11 +123,12 @@ location /v1/ {
 }
 ```
 
-ssefy sends `X-Accel-Buffering: no` and a `: ping` comment every 15s, so any proxy idle timeout above that works.
+ssefy already sends `X-Accel-Buffering: no` and a `: ping` comment every 15 seconds.
 
 ## Tests
 
 ```sh
 go test ./...
-SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' go test ./internal/store ./internal/api
+SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' \
+  go test ./internal/store ./internal/api
 ```
