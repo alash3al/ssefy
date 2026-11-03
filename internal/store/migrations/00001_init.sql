@@ -1,8 +1,7 @@
 -- +goose Up
 CREATE TABLE ssefy_streams (
     id         text PRIMARY KEY,
-    token      text, -- NULL = revoked; every new stream is created with one
-
+    token_hash text, -- SHA-256 digest of the read token; NULL = revoked
     last_seq   bigint NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now()
 );
