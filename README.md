@@ -91,7 +91,7 @@ Limits: 1 MiB request body · 500 events per push · 64 KiB of `data` per event 
 
 - Stored only as a SHA-256 digest. Create and rotate return the plaintext exactly once — keep it.
 - In the URL it lands in proxy access logs. Strip query strings at the proxy, route browsers through your own gateway, or accept it.
-- Rotate, revoke and delete close every reader on every node. EventSource cannot change its URL, so after a rotate the host must reopen the connection with the new token; the old URL reconnects to `404` and stops.
+- Rotate, revoke and delete close every reader on every node. EventSource cannot change its URL, so after a rotate the host must reopen the connection with the new token; the old token reconnects to `401` — the stream exists, the token no longer opens it — and a deleted stream answers `404`. EventSource stops reconnecting on either.
 - No expiry by design: revoke is the off switch, rotate is the re-issue.
 
 ## Configuration
