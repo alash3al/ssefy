@@ -94,3 +94,46 @@ func parseHistory(q url.Values) (store.Direction, int64, int, error) {
 	}
 	return dir, cursor, limit, nil
 }
+
+// trim removes stored events on one side of an exclusive bound — before drops
+// the oldest, after the newest — and answers how many went. last_seq is
+// preserved and the holes are harmless: every cursor in ssefy is exclusive.
+// Live readers are untouched; trim is a history concern, not a delivery one.
+func (s *Server) trim(w http.ResponseWriter, r *http.Request) {
+	dir, cursor, err := parseTrim(r.URL.Query())
+	if err != nil {
+		s.fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	removed, err := s.store.Trim(r.Context(), r.PathValue("id"), dir, cursor)
+	if s.failStream(w, err) {
+		return
+	}
+	if err != nil {
+		s.log.Error("trim events", "err", err)
+		s.fail(w, http.StatusInternalServerError, "could not trim events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"events": removed})
+}
+
+// parseTrim takes exactly one exclusive bound: before drops older events,
+// after drops newer ones.
+func parseTrim(q url.Values) (store.Direction, int64, error) {
+	before, after := q.Get("before"), q.Get("after")
+	switch {
+	case before != "" && after != "":
+		return 0, 0, errors.New("before and after are mutually exclusive")
+	case before == "" && after == "":
+		return 0, 0, errors.New("before or after is required")
+	}
+	raw, dir := before, store.Backward
+	if after != "" {
+		raw, dir = after, store.Forward
+	}
+	cursor, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || cursor < 0 {
+		return 0, 0, errors.New("invalid bound")
+	}
+	return dir, cursor, nil
+}

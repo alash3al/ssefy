@@ -70,6 +70,10 @@ type Store interface {
 	// beginning of the walk. limit must be positive. Unlike Read, List does
 	// not check the stream exists: callers authorize first.
 	List(ctx context.Context, stream string, dir Direction, cursor int64, limit int) ([]Row, bool, error)
+	// Trim removes stored events on one side of an exclusive bound — Backward
+	// drops seq < cursor, Forward drops seq > cursor — and returns how many
+	// went. last_seq is preserved: seqs are never reused.
+	Trim(ctx context.Context, stream string, dir Direction, cursor int64) (int64, error)
 	// OpenReader authorizes a token and returns the high-water seq.
 	OpenReader(ctx context.Context, stream, token string) (int64, error)
 	// Rotate mints a new token, invalidating the old one.

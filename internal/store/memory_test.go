@@ -7,4 +7,5 @@ func TestMemoryLifecycle(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	testLifecycle(t, s)
 	testList(t, s)
+	testTrim(t, s)
 }

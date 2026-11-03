@@ -96,6 +96,8 @@ Limits: 1 MiB request body · 500 events per push · 64 KiB of `data` per event 
 - `limit` — default 50, max 200.
 - Every page is oldest→newest, in both directions. `has_more` says whether the walk continues; the next cursor is the edge seq — `last.seq` forward, `first.seq` backward.
 
+**Trim** removes stored events on one side of an exclusive bound: `?before=N` drops `seq < N` (the oldest side) and `?after=N` drops `seq > N` (the newest; `after=0` clears the whole history but keeps the stream and its token). Exactly one of the two is required. `last_seq` is preserved — seqs are never reused — and the holes a trim leaves are harmless because every cursor in ssefy is an exclusive bound. Trim sends no close notice: live readers are unaffected, and history simply stops listing what was removed. An idempotent retry of an earlier push still answers with the seqs it originally returned, even for events a trim has since removed.
+
 A chat opens with `?limit=50`, then pages `?cursor=<oldest seq>` as the user scrolls up. Forward `has_more:false` means caught up **as of now** — newer events may still arrive, which is the SSE connection's job (or re-poll the same cursor). Backward `has_more:false` is final. `collapse_key` can drop an event from a later re-fetch, and transient events never appear: they were never stored.
 
 ## Tokens

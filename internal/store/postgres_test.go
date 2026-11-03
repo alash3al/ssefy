@@ -25,6 +25,7 @@ func TestPostgresLifecycle(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	testLifecycle(t, s)
 	testList(t, s)
+	testTrim(t, s)
 }
 
 // The whole design rests on seqs committing in order, so readers never skip one.

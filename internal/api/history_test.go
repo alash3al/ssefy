@@ -9,6 +9,22 @@ import (
 	"testing"
 )
 
+func trimEvents(t *testing.T, r *rig, id, query string) int64 {
+	t.Helper()
+	resp := r.write("DELETE", "/v1/streams/"+id+"/events?"+query, "")
+	defer closeBody(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("trim %s = %d", query, resp.StatusCode)
+	}
+	var out struct {
+		Events int64 `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Events
+}
+
 func history(t *testing.T, r *rig, id, token, query string) (historyResponse, string) {
 	t.Helper()
 	path := "/v1/streams/" + id + "/events?token=" + token
@@ -102,5 +118,62 @@ func TestHistory(t *testing.T) {
 		if resp.StatusCode != tc.want {
 			t.Errorf("%s = %d, want %d", tc.name, resp.StatusCode, tc.want)
 		}
+	}
+}
+
+func TestTrim(t *testing.T) {
+	r := newRig(t)
+	id, token := r.create()
+	r.append(id, `[{"data":"1"},{"data":"2"},{"data":"3"},{"data":"4"},{"data":"5"}]`)
+
+	// A write: the server secret, not the stream token.
+	if resp := r.do("DELETE", "/v1/streams/"+id+"/events?before=3", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no secret = %d", resp.StatusCode)
+	}
+
+	// Oldest side, then the sequence continues from last_seq.
+	if n := trimEvents(t, r, id, "before=3"); n != 2 {
+		t.Fatalf("before=3 removed %d", n)
+	}
+	h, _ := history(t, r, id, token, "")
+	if got := historySeqs(h); !slices.Equal(got, []int64{3, 4, 5}) {
+		t.Fatalf("after before=3 = %v", got)
+	}
+	r.append(id, `{"data":"6"}`)
+	h, _ = history(t, r, id, token, "")
+	if got := historySeqs(h); !slices.Equal(got, []int64{3, 4, 5, 6}) {
+		t.Fatalf("append after trim = %v", got)
+	}
+
+	// Newest side.
+	if n := trimEvents(t, r, id, "after=4"); n != 2 {
+		t.Fatalf("after=4 removed %d", n)
+	}
+	h, _ = history(t, r, id, token, "")
+	if got := historySeqs(h); !slices.Equal(got, []int64{3, 4}) {
+		t.Fatalf("after after=4 = %v", got)
+	}
+
+	// The full range clears the history and keeps the stream.
+	if n := trimEvents(t, r, id, "after=0"); n != 2 {
+		t.Fatalf("after=0 removed %d", n)
+	}
+	h, _ = history(t, r, id, token, "")
+	if len(h.Events) != 0 || h.HasMore {
+		t.Fatalf("cleared = %+v", h)
+	}
+
+	// Validation and unknown streams.
+	for _, q := range []string{"", "before=3&after=3", "before=abc", "before=-1"} {
+		resp := r.write("DELETE", "/v1/streams/"+id+"/events?"+q, "")
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("trim %q = %d", q, resp.StatusCode)
+		}
+	}
+	resp := r.write("DELETE", "/v1/streams/01900000-0000-7000-8000-000000000000/events?before=3", "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown stream = %d", resp.StatusCode)
 	}
 }

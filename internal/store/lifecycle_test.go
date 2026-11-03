@@ -261,3 +261,80 @@ func testList(t *testing.T, s Store) {
 		t.Fatalf("unknown stream = %v, %v, %v", rows, more, err)
 	}
 }
+
+// testTrim pins the trim contract on every store: exclusive bounds on either
+// side, last_seq preserved, ghost idempotency seqs, and the range extremes.
+func testTrim(t *testing.T, s Store) {
+	t.Helper()
+	ctx := context.Background()
+	id, token, err := s.Create(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	for i := 1; i <= 5; i++ {
+		events = append(events, Event{Event: "message", Data: "m" + strconv.Itoa(i)})
+	}
+	if _, err := s.Append(ctx, id, events, "first"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drop the oldest two: seq < 3.
+	removed, err := s.Trim(ctx, id, Backward, 3)
+	if err != nil || removed != 2 {
+		t.Fatalf("trim backward = %d, %v", removed, err)
+	}
+	rows, _, err := s.List(ctx, id, Forward, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 || rows[0].Seq != 3 || rows[2].Seq != 5 {
+		t.Fatalf("after backward trim = %d rows, first %d last %d", len(rows), rows[0].Seq, rows[len(rows)-1].Seq)
+	}
+
+	// last_seq survives a trim, so the next append continues the sequence.
+	last, err := s.OpenReader(ctx, id, token)
+	if err != nil || last != 5 {
+		t.Fatalf("last after trim = %d, %v", last, err)
+	}
+	seqs, err := s.Append(ctx, id, []Event{{Event: "message", Data: "m6"}}, "")
+	if err != nil || len(seqs) != 1 || seqs[0] != 6 {
+		t.Fatalf("append after trim = %v, %v", seqs, err)
+	}
+
+	// Drop the newest two: seq > 4 removes 5 and 6.
+	removed, err = s.Trim(ctx, id, Forward, 4)
+	if err != nil || removed != 2 {
+		t.Fatalf("trim forward = %d, %v", removed, err)
+	}
+	rows, _, err = s.List(ctx, id, Forward, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Seq != 3 || rows[1].Seq != 4 {
+		t.Fatalf("after forward trim = %v", rows)
+	}
+
+	// An idempotent retry reports the seqs it originally returned even though
+	// trim removed those rows: the record is the answer, and it must not
+	// re-insert anything.
+	retry, err := s.Append(ctx, id, events, "first")
+	if err != nil || len(retry) != 5 || retry[0] != 1 || retry[4] != 5 {
+		t.Fatalf("idempotent retry after trim = %v, %v", retry, err)
+	}
+	rows, _, err = s.List(ctx, id, Forward, 0, 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("retry re-inserted after trim: %v", rows)
+	}
+
+	// Range extremes: nothing is older than seq 0, everything is newer.
+	if removed, err := s.Trim(ctx, id, Backward, 0); err != nil || removed != 0 {
+		t.Fatalf("backward from 0 = %d, %v", removed, err)
+	}
+	if removed, err := s.Trim(ctx, id, Forward, 0); err != nil || removed != 2 {
+		t.Fatalf("forward from 0 = %d, %v", removed, err)
+	}
+	if _, err := s.Trim(ctx, "01900000-0000-7000-8000-000000000000", Backward, 5); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown stream = %v", err)
+	}
+}

@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/streams/{id}", s.auth(s.remove))
 	mux.HandleFunc("GET /v1/streams/{id}", s.stream)
 	mux.HandleFunc("GET /v1/streams/{id}/events", s.history)
+	mux.HandleFunc("DELETE /v1/streams/{id}/events", s.auth(s.trim))
 	mux.HandleFunc("GET /v1/streams/{id}/stat", s.auth(s.stat))
 	mux.HandleFunc("POST /v1/streams/{id}/rotate", s.auth(s.rotate))
 	mux.HandleFunc("POST /v1/streams/{id}/revoke", s.auth(s.revoke))

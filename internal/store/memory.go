@@ -170,6 +170,27 @@ func (m *memory) List(_ context.Context, id string, dir Direction, cursor int64,
 	return out, more, nil
 }
 
+// Trim removes events on one side of an exclusive bound, like postgres.
+func (m *memory) Trim(_ context.Context, id string, dir Direction, cursor int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.streams[id]
+	if !ok {
+		return 0, ErrNotFound
+	}
+	kept := s.events[:0]
+	var removed int64
+	for _, e := range s.events {
+		if (dir == Backward && e.Row.Seq < cursor) || (dir == Forward && e.Row.Seq > cursor) {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	s.events = kept
+	return removed, nil
+}
+
 func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

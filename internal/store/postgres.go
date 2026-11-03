@@ -302,6 +302,36 @@ func (p *postgres) List(ctx context.Context, id string, dir Direction, cursor in
 	return out, more, nil
 }
 
+// Trim removes events on one side of an exclusive bound. It is an event
+// mutation like an append, so it takes the same stream lock; last_seq stays
+// untouched because seqs are never reused.
+func (p *postgres) Trim(ctx context.Context, id string, dir Direction, cursor int64) (int64, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var one int
+	err = tx.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1 FOR UPDATE", id).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	query := "DELETE FROM ssefy_events WHERE stream_id = $1 AND seq < $2"
+	if dir == Forward {
+		query = "DELETE FROM ssefy_events WHERE stream_id = $1 AND seq > $2"
+	}
+	tag, err := tx.Exec(ctx, query, id, cursor)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
 func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, error) {
 	var n int64
 	var stored *string
