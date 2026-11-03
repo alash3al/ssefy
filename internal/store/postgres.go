@@ -275,14 +275,18 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, error) {
 	var n int64
 	var deletedAt *time.Time
+	var stored *string
 	err := p.pool.QueryRow(ctx,
-		"SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1 AND token = $2",
-		id, token).Scan(&n, &deletedAt)
+		"SELECT last_seq, deleted_at, token FROM ssefy_streams WHERE id = $1",
+		id).Scan(&n, &deletedAt, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound
 	}
 	if err != nil {
 		return 0, err
+	}
+	if token == "" || stored == nil || !sameToken(*stored, token) {
+		return 0, ErrUnauthorized
 	}
 	if deletedAt != nil {
 		return 0, ErrGone

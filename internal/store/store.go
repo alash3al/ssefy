@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -18,6 +19,8 @@ var (
 	ErrTooLarge = errors.New("transient event too large")
 	// ErrGone means the stream was deleted; its id is a tombstone.
 	ErrGone = errors.New("stream deleted")
+	// ErrUnauthorized means the stream exists but the token does not open it.
+	ErrUnauthorized = errors.New("invalid token")
 )
 
 // Event is one pushed event. Event defaults to "message" before it reaches a Store.
@@ -78,6 +81,11 @@ type Store interface {
 	Ready(ctx context.Context) error
 	// Close releases the store's resources.
 	Close() error
+}
+
+// sameToken compares two read tokens without an early exit.
+func sameToken(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // newStreamID returns a time-sortable UUIDv7, the public stream id.

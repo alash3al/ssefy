@@ -154,7 +154,7 @@ func testLifecycle(t *testing.T, s Store) {
 
 	// Token lifecycle: a wrong token is invisible, rotate invalidates, revoke
 	// stops reads until the next rotate.
-	if _, err := s.OpenReader(ctx, id, "wrong"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OpenReader(ctx, id, "wrong"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("wrong token = %v", err)
 	}
 	rotated, err := s.Rotate(ctx, id)
@@ -162,7 +162,7 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatal(err)
 	}
 	waitClosed()
-	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("old token after rotate = %v", err)
 	}
 	if _, err := s.OpenReader(ctx, id, rotated); err != nil {
@@ -171,7 +171,7 @@ func testLifecycle(t *testing.T, s Store) {
 	if err := s.Revoke(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.OpenReader(ctx, id, rotated); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OpenReader(ctx, id, rotated); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("token after revoke = %v", err)
 	}
 	if st, err := s.Stat(ctx, id); err != nil || st.Readable {

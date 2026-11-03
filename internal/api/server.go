@@ -60,7 +60,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // failStream answers the lookup failures every stream endpoint shares: 404 for
-// an unknown id or a token that does not open it, 410 for a tombstone.
+// an unknown id, 410 for a tombstone.
 func (s *Server) failStream(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, store.ErrNotFound):

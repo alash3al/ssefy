@@ -50,6 +50,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	last, err := s.store.OpenReader(r.Context(), id, token)
+	if errors.Is(err, store.ErrUnauthorized) {
+		s.fail(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
 	if s.failStream(w, err) {
 		return
 	}

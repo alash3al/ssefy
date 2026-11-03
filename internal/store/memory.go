@@ -147,8 +147,11 @@ func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok || token == "" || s.token != token {
+	if !ok {
 		return 0, ErrNotFound
+	}
+	if token == "" || !sameToken(s.token, token) {
+		return 0, ErrUnauthorized
 	}
 	if s.deletedAt != nil {
 		return 0, ErrGone

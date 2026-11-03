@@ -14,7 +14,7 @@ func TestReaderTokens(t *testing.T) {
 	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no token = %d", resp.StatusCode)
 	}
-	if resp := r.do("GET", "/v1/streams/"+id+"?token=wrong", "", nil); resp.StatusCode != http.StatusNotFound {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token=wrong", "", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token = %d", resp.StatusCode)
 	}
 
@@ -24,7 +24,7 @@ func TestReaderTokens(t *testing.T) {
 		t.Fatalf("token header = %d", head.StatusCode)
 	}
 	_ = head.Body.Close()
-	if resp := r.do("GET", "/v1/streams/"+id, "", map[string]string{"Authorization": "Bearer wrong"}); resp.StatusCode != http.StatusNotFound {
+	if resp := r.do("GET", "/v1/streams/"+id, "", map[string]string{"Authorization": "Bearer wrong"}); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token header = %d", resp.StatusCode)
 	}
 
@@ -44,7 +44,7 @@ func TestReaderTokens(t *testing.T) {
 	if _, err := br.ReadString('\n'); err == nil {
 		t.Fatal("reader stayed open after rotate")
 	}
-	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusNotFound {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("old token after rotate = %d", resp.StatusCode)
 	}
 	probe := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil)
@@ -57,7 +57,7 @@ func TestReaderTokens(t *testing.T) {
 	if code := r.revoke(id); code != http.StatusNoContent {
 		t.Fatalf("revoke = %d", code)
 	}
-	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusNotFound {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("token after revoke = %d", resp.StatusCode)
 	}
 	if st := r.stat(id); st.Readable {
