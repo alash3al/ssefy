@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,6 +121,12 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("collapsed events = %d, want 1", collapsed)
 	}
 
+	// A transient event has to fit one wake-up payload.
+	oversized := []Event{{Event: "typing", Data: strings.Repeat("x", 8000), Transient: true}}
+	if _, err := s.Append(ctx, id, oversized, ""); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("oversized transient = %v", err)
+	}
+
 	// Transient events are delivered live and never stored.
 	live, stop := s.Live(id)
 	defer stop()
@@ -166,5 +173,8 @@ func testLifecycle(t *testing.T, s Store) {
 	}
 	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrGone) {
 		t.Fatalf("append after delete = %v", err)
+	}
+	if _, err := s.Append(ctx, id, []Event{{Event: "typing", Data: "x", Transient: true}}, ""); !errors.Is(err, ErrGone) {
+		t.Fatalf("transient after delete = %v", err)
 	}
 }

@@ -15,12 +15,11 @@ import (
 )
 
 const (
-	maxBody      = 1 << 20
-	maxEvents    = 500
-	maxData      = 64 << 10 // keeps one replay page small in memory
-	maxName      = 64
-	maxKey       = 255
-	maxTransient = 7000 // NOTIFY carries transient events; stay under 8000 bytes
+	maxBody   = 1 << 20
+	maxEvents = 500
+	maxData   = 64 << 10 // keeps one replay page small in memory
+	maxName   = 64
+	maxKey    = 255
 )
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
@@ -165,9 +164,6 @@ func validate(events []store.Event, idemKey string) error {
 		}
 		if ev.Transient {
 			transient++
-			if len(ev.Event)+len(ev.Data) > maxTransient {
-				return fmt.Errorf("transient event larger than %d bytes", maxTransient)
-			}
 		}
 	}
 

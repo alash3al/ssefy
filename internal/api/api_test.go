@@ -245,6 +245,11 @@ func TestValidation(t *testing.T) {
 	if resp := r.write("POST", "/v1/streams/"+id, `{"data":"ok"}`); resp.StatusCode != http.StatusOK {
 		t.Fatalf("valid = %d", resp.StatusCode)
 	}
+
+	oversized := `{"data":"` + strings.Repeat("x", 8000) + `","transient":true}`
+	if resp := r.write("POST", "/v1/streams/"+id, oversized); resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized transient = %d", resp.StatusCode)
+	}
 }
 
 func TestIdempotencyHTTP(t *testing.T) {

@@ -222,22 +222,24 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 }
 
 func (p *postgres) appendTransient(ctx context.Context, id string, events []Event) error {
-	var one int
-	err := p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
+	payloads, err := encodeTransients(id, events)
+	if err != nil {
+		return err
+	}
+
+	var deletedAt *time.Time
+	err = p.pool.QueryRow(ctx, "SELECT deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&deletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	for _, ev := range events {
-		payload, err := encodeNotice(notice{ID: id, Transient: true, Event: ev.Event, Data: ev.Data})
-		if err != nil {
-			return err
-		}
-		if len(payload) > maxNotify {
-			return ErrTooLarge
-		}
+	if deletedAt != nil {
+		return ErrGone
+	}
+
+	for _, payload := range payloads {
 		if _, err := p.pool.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
 			return err
 		}

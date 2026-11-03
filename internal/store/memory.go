@@ -74,6 +74,9 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 	}
 	if events[0].Transient {
 		m.mu.Unlock()
+		if _, err := encodeTransients(id, events); err != nil {
+			return nil, err
+		}
 		for _, ev := range events {
 			m.hub.notify(id, Notice{Transient: true, Event: ev.Event, Data: ev.Data})
 		}

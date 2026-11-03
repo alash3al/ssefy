@@ -12,7 +12,8 @@ import (
 
 const (
 	notifyChannel = "ssefy"
-	maxNotify     = 7800 // NOTIFY payloads must stay under 8000 bytes
+	// PostgreSQL rejects NOTIFY payloads of 8000 bytes or more.
+	maxTransientPayload = 7800
 )
 
 // listen holds one dedicated connection so every node sees every commit.
@@ -78,6 +79,24 @@ type notice struct {
 	Transient bool   `json:"t,omitempty"`
 	Event     string `json:"e,omitempty"`
 	Data      string `json:"x,omitempty"`
+}
+
+// encodeTransients encodes one wake-up payload per transient event and rejects
+// any that would not fit. Both stores use it, so memory:// and postgres://
+// accept exactly the same transient pushes.
+func encodeTransients(id string, events []Event) ([]string, error) {
+	payloads := make([]string, len(events))
+	for i, ev := range events {
+		payload, err := encodeNotice(notice{ID: id, Transient: true, Event: ev.Event, Data: ev.Data})
+		if err != nil {
+			return nil, err
+		}
+		if len(payload) > maxTransientPayload {
+			return nil, ErrTooLarge
+		}
+		payloads[i] = payload
+	}
+	return payloads, nil
 }
 
 func encodeNotice(n notice) (string, error) {

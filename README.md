@@ -50,7 +50,7 @@ Deletion removes the events, append records and create keys; the id stays as a t
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
 - `Idempotency-Key` makes a retried push return the original seqs and deliver once. The same key with a different body is `422`.
 
-Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. Push idempotency keys are per stream; create keys are global.
+Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. A transient event must also fit one NOTIFY payload: about 7.8 KiB after JSON encoding. Push idempotency keys are per stream; create keys are global.
 
 ## Resuming
 
