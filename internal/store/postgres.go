@@ -285,15 +285,8 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	}
 	defer rows.Close()
 
-	var out []Row
-	for rows.Next() {
-		var r Row
-		if err := rows.Scan(&r.Seq, &r.Event, &r.Data, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
-	}
-	if err := rows.Err(); err != nil {
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByName[Row])
+	if err != nil {
 		return nil, err
 	}
 	if len(out) > 0 {
