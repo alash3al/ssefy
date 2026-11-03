@@ -26,9 +26,10 @@ type historyResponse struct {
 	HasMore bool           `json:"has_more"`
 }
 
-// history pages through stored events with the stream token, one bounded page
-// per call, always oldest to newest. It shares only the token with the live
-// path: a stream can be listed with nobody listening.
+// history pages through stored events with the reader credential — the
+// stream token or the server secret — one bounded page per call, always
+// oldest to newest. It shares only that credential with the live path: a
+// stream can be listed with nobody listening.
 func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	token := readToken(r)
 	if token == "" {

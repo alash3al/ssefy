@@ -62,8 +62,9 @@ func (s *Server) Handler() http.Handler {
 	return instrument(s.cors(mux))
 }
 
-// readToken picks the stream token out of a request: the query string for
-// EventSource, which cannot set headers, then the Authorization header.
+// readToken picks the reader credential out of a request: the query string
+// for EventSource, which cannot set headers, then the Authorization header,
+// which carries the stream token or the server secret.
 func readToken(r *http.Request) string {
 	if token := r.URL.Query().Get("token"); token != "" {
 		return token
@@ -72,9 +73,32 @@ func readToken(r *http.Request) string {
 	return token
 }
 
-// authorize answers the token check both reader endpoints share and reports
-// whether the request may continue.
+// secretBearer reports whether the request carries the server secret in its
+// Authorization header. The secret never travels in the query string, where
+// it would land in proxy logs: ?token= stays a stream token.
+func (s *Server) secretBearer(r *http.Request) bool {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(s.secret)) == 1
+}
+
+// authorize answers the credential check both reader endpoints share and
+// reports whether the request may continue. The server secret is one of the
+// accepted readers — it could mint a fresh token via rotate anyway — so a
+// host that reads server-side never needs to keep the stream token. It reads
+// even a revoked stream: revoke kills the token, not the host.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, id, token string) (int64, bool) {
+	if s.secretBearer(r) {
+		st, err := s.store.Stat(r.Context(), id)
+		switch {
+		case s.failStream(w, err):
+		case err != nil:
+			s.log.Error("stat reader", "err", err)
+			s.fail(w, http.StatusInternalServerError, "store error")
+		default:
+			return st.LastSeq, true
+		}
+		return 0, false
+	}
 	last, err := s.store.OpenReader(r.Context(), id, token)
 	switch {
 	case errors.Is(err, store.ErrUnauthorized):
@@ -154,11 +178,10 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// auth protects writes. Reads stay open; the stream id is the capability.
+// auth protects writes: only the server secret passes.
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(s.secret)) != 1 {
+		if !s.secretBearer(r) {
 			s.fail(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}

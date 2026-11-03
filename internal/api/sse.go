@@ -27,6 +27,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	withSecret := s.secretBearer(r)
 	token := readToken(r)
 	if token == "" {
 		s.fail(w, http.StatusUnauthorized, "token required")
@@ -151,8 +152,14 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			}
 		case <-ping.C:
 			// A close notice lost during a listener outage must not outlive
-			// this tick: one primary-key read per connection re-authorizes.
-			if _, err := s.store.OpenReader(r.Context(), id, token); err != nil {
+			// this tick: one row read per connection re-authorizes. The
+			// secret cannot be revoked, so for that reader the tick only
+			// watches for a deleted stream.
+			if withSecret {
+				if _, err := s.store.Stat(r.Context(), id); err != nil {
+					return
+				}
+			} else if _, err := s.store.OpenReader(r.Context(), id, token); err != nil {
 				return
 			}
 			if err := rc.SetWriteDeadline(time.Now().Add(writeWindow)); err != nil {

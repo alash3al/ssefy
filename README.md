@@ -7,7 +7,7 @@ Push events from your backend, stream them to browsers over plain SSE, resume ex
 - A **stream** is an ordered, per-stream event log. Writes append; reads are SSE.
 - The **id** is a public, time-sortable UUIDv7 — only an address.
 - The **token** is a 128-bit secret that opens reads for one stream. Browsers pass it as `?token=` (EventSource cannot set headers); any other client may send `Authorization: Bearer <token>` instead.
-- The **server secret** guards writes and admin calls. Your backend holds it; browsers never see it.
+- The **server secret** guards writes and admin calls, and also opens reads — SSE and history. It travels only in the `Authorization` header, never `?token=`, where it would land in proxy logs; a host that reads server-side never needs to keep the stream token. Your backend holds it; browsers never see it.
 - Every stored event gets a per-stream **seq**, which is the SSE `id:`. A reconnect with `Last-Event-ID` gets exactly what it missed, nothing twice.
 - Nodes hold only open connections: run any number of them behind a plain load balancer.
 
@@ -49,7 +49,9 @@ In a browser: `new EventSource("/v1/streams/" + id + "?token=" + token)`.
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id","token"}` |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[…]}`, `404` unknown or deleted |
 | `POST /v1/push` | Server secret | Appends the same events to up to 100 streams in one call |
-| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. `401` no or bad token, `404` unknown or deleted |
+| `GET /v1/streams/{id}` | Stream token or server secret | SSE: replays, then streams live. `401` no or bad token, `404` unknown or deleted |
+| `GET /v1/streams/{id}/events` | Stream token or server secret | History: one page of stored events, always oldest→newest |
+| `DELETE /v1/streams/{id}/events` | Server secret | Trim: removes events on one side of an exclusive bound. `200 {"events":n}` |
 | `DELETE /v1/streams/{id}` | Server secret | Removes the stream and its events. `204`, also for an unknown id |
 | `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}` — `readable` is `false` while revoked |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token"}` |
@@ -89,7 +91,7 @@ Limits: 1 MiB request body · 500 events per push · 64 KiB of `data` per event 
 
 ## History
 
-`GET /v1/streams/{id}/events` pages through stored events with the same token as SSE reads. A stream can be listed with nobody listening — SSE and history are two readers over one log.
+`GET /v1/streams/{id}/events` pages through stored events with the same credentials as SSE reads: the stream token or the server secret. A stream can be listed with nobody listening — SSE and history are two readers over one log.
 
 - `direction` — `forward` or `backward`, default `backward`: the latest page first, walking toward older events.
 - `cursor` — a seq, exclusive. Absent starts at the beginning of the walk: the first event forward, the newest backward. Same number space as the SSE `id:`, so `Last-Event-ID` seeds it.
@@ -106,6 +108,7 @@ A chat opens with `?limit=50`, then pages `?cursor=<oldest seq>` as the user scr
 - In the URL it lands in proxy access logs. Strip query strings at the proxy, route browsers through your own gateway, or accept it.
 - Rotate, revoke and delete close every reader on every node. EventSource cannot change its URL, so after a rotate the host must reopen the connection with the new token; the old token reconnects to `401` — the stream exists, the token no longer opens it — and a deleted stream answers `404`. EventSource stops reconnecting on either.
 - No expiry by design: revoke is the off switch, rotate is the re-issue.
+- The server secret reads any stream, including a revoked one — revoke kills the token, not the host — and keeps working across a rotate. Stat, rotate and revoke stay secret-only: they are host tools, not reader endpoints.
 
 ## Configuration
 
@@ -122,7 +125,7 @@ Settings come from the environment. `./.env` is read first when it exists; real 
 ## Operating
 
 - `/healthz` answers `503` once a node has been without its LISTEN connection for 30 seconds: reads would still replay, but live events would never arrive. The 30s grace keeps a one-second blip from pulling the node off the balancer.
-- `/metrics` is open like `/healthz` — reads themselves need a token — so gate both at the proxy if that matters. Exported: `ssefy_readers`, `ssefy_events_appended_total{kind}`, `ssefy_events_delivered_total{kind}`, `ssefy_event_delivery_lag_seconds`, `ssefy_http_requests_total{method,route,status}`, `ssefy_http_duration_seconds`, `ssefy_notifications_total{kind}`, `ssefy_listener_up`, `ssefy_listener_reconnects_total`, `ssefy_slow_readers_total`, `ssefy_transient_dropped_total`, plus the Go and process collectors.
+- `/metrics` is open like `/healthz` — reads themselves need a credential — so gate both at the proxy if that matters. Exported: `ssefy_readers`, `ssefy_events_appended_total{kind}`, `ssefy_events_delivered_total{kind}`, `ssefy_event_delivery_lag_seconds`, `ssefy_http_requests_total{method,route,status}`, `ssefy_http_duration_seconds`, `ssefy_notifications_total{kind}`, `ssefy_listener_up`, `ssefy_listener_reconnects_total`, `ssefy_slow_readers_total`, `ssefy_transient_dropped_total`, plus the Go and process collectors.
 - ssefy speaks HTTP/1.1. Terminate TLS at the proxy; browsers get HTTP/2 there, which is what lifts their six-connections-per-origin limit on SSE.
 - SSE needs buffering off and a read timeout above the 15s heartbeat:
 
