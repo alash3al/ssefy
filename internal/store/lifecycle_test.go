@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 // testLifecycle runs the same contract against every Store implementation.
@@ -25,7 +25,7 @@ func testLifecycle(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed, err := uuid.Parse(id); err != nil || parsed.Version() != 7 {
+	if parsed, err := uuid.Parse(id); err != nil || parsed[6]>>4 != 7 {
 		t.Fatalf("id %q is not a UUIDv7", id)
 	}
 

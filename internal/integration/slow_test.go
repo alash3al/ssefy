@@ -59,7 +59,7 @@ func TestSlowReaderCannotBlock(t *testing.T) {
 	// A burst of transients queues what fits and drops the rest — a
 	// transient may be lost for a reader that is behind.
 	const bursts = 12
-	for i := 0; i < bursts; i++ {
+	for range bursts {
 		b.appendEvents(t, id, `{"event":"typing","data":"tick","transient":true}`, "")
 	}
 	waitFor(t, 10*time.Second, func() bool { return a.metric(t, "ssefy_transient_dropped_total") >= 1 })

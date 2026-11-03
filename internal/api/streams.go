@@ -36,8 +36,7 @@ func (s *Server) append(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			s.fail(w, http.StatusRequestEntityTooLarge, "body too large")
 			return
 		}

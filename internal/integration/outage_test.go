@@ -37,7 +37,7 @@ func TestListenerOutage(t *testing.T) {
 		}
 	}
 	healthy := openSSE(t, b, "/v1/streams/"+s1+"?token="+t1+"&after=0", nil)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		healthy.next(t, 5*time.Second)
 	}
 	rotated := openSSE(t, a, "/v1/streams/"+s2+"?token="+t2+"&after=0", nil)

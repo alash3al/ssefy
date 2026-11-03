@@ -9,8 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 var (
@@ -113,13 +112,10 @@ const (
 	Backward
 )
 
-// newStreamID returns a time-sortable UUIDv7, the public stream id.
-func newStreamID() (string, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return "", err
-	}
-	return id.String(), nil
+// newStreamID returns a time-sortable UUIDv7, the public stream id. The
+// standard library's NewV7 always increases, so ids sort by creation.
+func newStreamID() string {
+	return uuid.NewV7().String()
 }
 
 // newToken returns 128 random bits, the secret that opens one stream.

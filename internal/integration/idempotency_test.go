@@ -65,9 +65,7 @@ func TestSimultaneousRetries(t *testing.T) {
 	var mu sync.Mutex
 	var got [][]int64
 	for i := range 4 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			n := a
 			if i%2 == 1 {
 				n = b
@@ -80,7 +78,7 @@ func TestSimultaneousRetries(t *testing.T) {
 			mu.Lock()
 			got = append(got, seqs)
 			mu.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 

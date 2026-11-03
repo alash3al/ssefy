@@ -87,10 +87,7 @@ func migrate(ctx context.Context, dsn string) error {
 
 func (p *postgres) Create(ctx context.Context) (string, string, error) {
 	for range 3 {
-		id, err := newStreamID()
-		if err != nil {
-			return "", "", err
-		}
+		id := newStreamID()
 		token, err := newToken()
 		if err != nil {
 			return "", "", err
@@ -466,6 +463,6 @@ func nullString(s string) any {
 }
 
 func isUnique(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	pgErr, ok := errors.AsType[*pgconn.PgError](err)
+	return ok && pgErr.Code == "23505"
 }

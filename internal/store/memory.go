@@ -33,10 +33,7 @@ func NewMemory() Store {
 }
 
 func (m *memory) Create(context.Context) (string, string, error) {
-	id, err := newStreamID()
-	if err != nil {
-		return "", "", err
-	}
+	id := newStreamID()
 	token, err := newToken()
 	if err != nil {
 		return "", "", err
@@ -145,10 +142,7 @@ func (m *memory) List(_ context.Context, id string, dir Direction, cursor int64,
 	more := false
 	if dir == Forward {
 		first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > cursor })
-		last := first + limit
-		if last > len(s.events) {
-			last = len(s.events)
-		}
+		last := min(first+limit, len(s.events))
 		more = first+limit < len(s.events)
 		page = s.events[first:last]
 	} else {
@@ -156,10 +150,7 @@ func (m *memory) List(_ context.Context, id string, dir Direction, cursor int64,
 		if cursor > 0 {
 			end = sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq >= cursor })
 		}
-		start := end - limit
-		if start < 0 {
-			start = 0
-		}
+		start := max(end-limit, 0)
 		more = end-limit > 0
 		page = s.events[start:end] // already oldest to newest
 	}

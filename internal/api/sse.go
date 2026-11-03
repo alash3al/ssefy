@@ -190,7 +190,7 @@ func formatEvent(seq int64, event, data string) string {
 	b.WriteByte('\n')
 	data = strings.ReplaceAll(data, "\r\n", "\n")
 	data = strings.ReplaceAll(data, "\r", "\n")
-	for _, line := range strings.Split(data, "\n") {
+	for line := range strings.SplitSeq(data, "\n") {
 		b.WriteString("data: ")
 		b.WriteString(line)
 		b.WriteByte('\n')

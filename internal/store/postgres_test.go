@@ -45,15 +45,13 @@ func TestPostgresConcurrentSeqs(t *testing.T) {
 	const writers, each = 8, 5
 	var wg sync.WaitGroup
 	for range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range each {
 				if _, err := s.Append(ctx, id, []Event{{Event: "message", Data: "x"}}, ""); err != nil {
 					t.Error(err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
