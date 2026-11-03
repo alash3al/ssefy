@@ -15,7 +15,8 @@ docker run --rm -p 8080:8080 \
 Or from source:
 
 ```sh
-SSEFY_SERVER_SECRET=change-me SSEFY_STORE='postgres://user:pass@host/db' ./ssefy
+cp .env.example .env   # edit it
+./ssefy
 ```
 
 `SSEFY_STORE=memory://` (the default) runs without PostgreSQL, for development only. Migrations run at startup.
@@ -58,14 +59,15 @@ Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255
 
 ## Configuration
 
+Settings come from the environment. `./.env` is loaded first when it exists, then real environment variables win. Use `--env-file path` to load a different file; a missing explicit file is an error.
+
 | Setting | Default |
 | --- | --- |
 | `SSEFY_LISTEN` | `:8080` |
 | `SSEFY_STORE` | `memory://` |
-| `SSEFY_SERVER_SECRET` | required unless `--dev` |
-| `SSEFY_CORS_ORIGINS` | `*` with `--dev` |
-
-Flags: `--listen`, `--store`, `--secret`, `--cors`, `--dev`.
+| `SSEFY_SERVER_SECRET` | required unless `SSEFY_DEV=true` |
+| `SSEFY_CORS_ORIGINS` | `*` with `SSEFY_DEV=true`, comma separated |
+| `SSEFY_DEV` | `false` |
 
 The server speaks HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port. Browsers only use HTTP/2 over TLS, so terminate TLS at the proxy and let it speak HTTP/2 to the browser; that is also what lifts the six-connections-per-origin limit on SSE. h2c here is for the proxy or a Go client.
 

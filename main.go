@@ -13,41 +13,39 @@ import (
 	"time"
 
 	"github.com/alash3al/ssefy/internal/api"
+	"github.com/alash3al/ssefy/internal/config"
 	"github.com/alash3al/ssefy/internal/store"
 )
 
 func main() {
-	listen := flag.String("listen", env("SSEFY_LISTEN", ":8080"), "listen address")
-	dsn := flag.String("store", env("SSEFY_STORE", "memory://"), "store: postgres://... or memory://")
-	secret := flag.String("secret", env("SSEFY_SERVER_SECRET", ""), "server secret for writes")
-	cors := flag.String("cors", env("SSEFY_CORS_ORIGINS", ""), "allowed CORS origins, comma separated")
-	dev := flag.Bool("dev", false, "development mode")
+	envFile := flag.String("env-file", "", "path to .env (default ./.env)")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(log) // the store logs through slog.Default
 
-	if *secret == "" {
-		if !*dev {
-			log.Error("SSEFY_SERVER_SECRET is required unless --dev")
-			os.Exit(1)
-		}
-		*secret = "dev"
-		log.Warn("using the insecure development secret")
+	cfg, err := config.Load(*envFile)
+	if err != nil {
+		log.Error("config", "err", err)
+		os.Exit(1)
 	}
+	if cfg.Dev {
+		log.Warn("development mode: SSEFY_SERVER_SECRET defaults to \"dev\"")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := openStore(ctx, *dsn)
+	st, err := openStore(ctx, cfg.Store)
 	if err != nil {
 		log.Error("store", "err", err)
 		os.Exit(1)
 	}
 	defer func() { _ = st.Close() }()
 
-	a := api.New(st, *secret, origins(*cors, *dev), log)
+	a := api.New(st, cfg.Secret, cfg.CORS, log)
 	srv := &http.Server{
-		Addr:              *listen,
+		Addr:              cfg.Listen,
 		Handler:           a.Handler(),
 		Protocols:         protocols(),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -57,7 +55,7 @@ func main() {
 
 	errs := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", *listen, "store", storeKind(*dsn))
+		log.Info("listening", "addr", cfg.Listen, "store", storeKind(cfg.Store))
 		errs <- srv.ListenAndServe()
 	}()
 
@@ -98,27 +96,4 @@ func openStore(ctx context.Context, dsn string) (store.Store, error) {
 		return store.NewMemory(), nil
 	}
 	return store.OpenPostgres(ctx, dsn)
-}
-
-func origins(cors string, dev bool) []string {
-	if cors == "" {
-		if dev {
-			return []string{"*"}
-		}
-		return nil
-	}
-	var out []string
-	for _, o := range strings.Split(cors, ",") {
-		if o = strings.TrimSpace(o); o != "" {
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
