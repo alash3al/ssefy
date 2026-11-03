@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/alash3al/ssefy/internal/metrics"
 )
 
@@ -61,8 +63,8 @@ func (p *postgres) dispatch(payload string) {
 		return
 	}
 	switch {
-	case msg.Deleted:
-		metrics.Notifications.WithLabelValues("delete").Inc()
+	case msg.Close:
+		metrics.Notifications.WithLabelValues("close").Inc()
 		p.hub.close(msg.ID)
 	case msg.Transient:
 		metrics.Notifications.WithLabelValues("transient").Inc()
@@ -75,7 +77,7 @@ func (p *postgres) dispatch(payload string) {
 
 type notice struct {
 	ID        string `json:"i"`
-	Deleted   bool   `json:"d,omitempty"`
+	Close     bool   `json:"c,omitempty"`
 	Transient bool   `json:"t,omitempty"`
 	Event     string `json:"e,omitempty"`
 	Data      string `json:"x,omitempty"`
@@ -97,6 +99,18 @@ func encodeTransients(id string, events []Event) ([]string, error) {
 		payloads[i] = payload
 	}
 	return payloads, nil
+}
+
+// notifyClose tells every node to end its readers of this stream. The reason
+// is not in the payload: the reconnect gets 404 after rotate/revoke and 410
+// after delete.
+func notifyClose(ctx context.Context, tx pgx.Tx, id string) error {
+	payload, err := encodeNotice(notice{ID: id, Close: true})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload)
+	return err
 }
 
 func encodeNotice(n notice) (string, error) {

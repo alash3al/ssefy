@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // testLifecycle runs the same contract against every Store implementation.
@@ -17,12 +19,12 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("ready = %v", err)
 	}
 
-	id, err := s.Create(ctx)
+	id, token, err := s.Create(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(id) != 32 {
-		t.Fatalf("id %q is not 32 hex chars", id)
+	if parsed, err := uuid.Parse(id); err != nil || parsed.Version() != 7 {
+		t.Fatalf("id %q is not a UUIDv7", id)
 	}
 
 	events := []Event{{Event: "message", Data: "one"}, {Event: "tick", Data: "two"}}
@@ -41,7 +43,7 @@ func testLifecycle(t *testing.T, s Store) {
 	if rows, _ := s.Read(ctx, id, 1, 10); len(rows) != 1 || rows[0].Seq != 2 {
 		t.Fatalf("read after 1 = %v", rows)
 	}
-	if last, err := s.LastSeq(ctx, id); err != nil || last != 2 {
+	if last, err := s.OpenReader(ctx, id, token); err != nil || last != 2 {
 		t.Fatalf("last = %d, %v", last, err)
 	}
 
@@ -68,7 +70,7 @@ func testLifecycle(t *testing.T, s Store) {
 	}
 
 	// Collapsing an event away must not erase its idempotency record.
-	lastBefore, _ := s.LastSeq(ctx, id)
+	lastBefore, _ := s.OpenReader(ctx, id, token)
 	keyed := []Event{{Event: "presence", Data: "first", CollapseKey: "cz"}}
 	keyedSeqs, err := s.Append(ctx, id, keyed, "collapse-keyed")
 	if err != nil {
@@ -81,7 +83,7 @@ func testLifecycle(t *testing.T, s Store) {
 	if err != nil || len(retrySeqs) != 1 || retrySeqs[0] != keyedSeqs[0] {
 		t.Fatalf("collapse retry = %v, %v", retrySeqs, err)
 	}
-	if last, _ := s.LastSeq(ctx, id); last != lastBefore+2 {
+	if last, _ := s.OpenReader(ctx, id, token); last != lastBefore+2 {
 		t.Fatalf("collapse retry inserted: last = %d, want %d", last, lastBefore+2)
 	}
 
@@ -136,14 +138,49 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("transient event was stored: %d -> %d", len(before), len(after))
 	}
 
+	// Token lifecycle: a wrong token is invisible, rotate invalidates, revoke
+	// stops reads until the next rotate.
+	if _, err := s.OpenReader(ctx, id, "wrong"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong token = %v", err)
+	}
+	rotated, err := s.Rotate(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old token after rotate = %v", err)
+	}
+	if _, err := s.OpenReader(ctx, id, rotated); err != nil {
+		t.Fatalf("rotated token = %v", err)
+	}
+	if err := s.Revoke(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.OpenReader(ctx, id, rotated); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("token after revoke = %v", err)
+	}
+	if st, err := s.Stat(ctx, id); err != nil || st.Readable {
+		t.Fatalf("stat after revoke = %+v, %v", st, err)
+	}
+	token, err = s.Rotate(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := s.Stat(ctx, id); err != nil || !st.Readable {
+		t.Fatalf("stat after rotate = %+v, %v", st, err)
+	}
+
 	if err := s.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Read(ctx, id, 0, 10); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("read after delete = %v", err)
 	}
-	if _, err := s.LastSeq(ctx, id); !errors.Is(err, ErrGone) {
-		t.Fatalf("last after delete = %v", err)
+	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrGone) {
+		t.Fatalf("open after delete = %v", err)
+	}
+	if st, err := s.Stat(ctx, id); err != nil || st.DeletedAt == nil || st.Readable {
+		t.Fatalf("stat after delete = %+v, %v", st, err)
 	}
 	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrGone) {
 		t.Fatalf("append after delete = %v", err)

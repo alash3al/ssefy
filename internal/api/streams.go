@@ -23,13 +23,13 @@ const (
 )
 
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
-	id, err := s.store.Create(r.Context())
+	id, token, err := s.store.Create(r.Context())
 	if err != nil {
 		s.log.Error("create stream", "err", err)
 		s.fail(w, http.StatusInternalServerError, "could not create stream")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"id": id})
+	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "token": token})
 }
 
 func (s *Server) append(w http.ResponseWriter, r *http.Request) {

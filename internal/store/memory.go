@@ -12,13 +12,15 @@ type memory struct {
 	mu      sync.Mutex
 	hub     *hub
 	streams map[string]*memStream
-	deleted map[string]struct{}
 }
 
 type memStream struct {
-	lastSeq int64
-	events  []memEvent
-	idem    map[string][]int64
+	token     string
+	lastSeq   int64
+	createdAt time.Time
+	deletedAt *time.Time
+	events    []memEvent
+	idem      map[string][]int64
 }
 
 type memEvent struct {
@@ -27,34 +29,38 @@ type memEvent struct {
 }
 
 func NewMemory() Store {
-	return &memory{
-		hub:     newHub(),
-		streams: make(map[string]*memStream),
-		deleted: make(map[string]struct{}),
-	}
+	return &memory{hub: newHub(), streams: make(map[string]*memStream)}
 }
 
-func (m *memory) Create(context.Context) (string, error) {
-	id, err := newID()
+func (m *memory) Create(context.Context) (string, string, error) {
+	id, err := newStreamID()
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+	token, err := newToken()
+	if err != nil {
+		return "", "", err
 	}
 	m.mu.Lock()
-	m.streams[id] = &memStream{idem: make(map[string][]int64)}
+	m.streams[id] = &memStream{
+		token:     token,
+		createdAt: time.Now(),
+		idem:      make(map[string][]int64),
+	}
 	m.mu.Unlock()
-	return id, nil
+	return id, token, nil
 }
 
 func (m *memory) Append(_ context.Context, id string, events []Event, idemKey string) ([]int64, error) {
 	m.mu.Lock()
-	if _, gone := m.deleted[id]; gone {
-		m.mu.Unlock()
-		return nil, ErrGone
-	}
 	s, ok := m.streams[id]
 	if !ok {
 		m.mu.Unlock()
 		return nil, ErrNotFound
+	}
+	if s.deletedAt != nil {
+		m.mu.Unlock()
+		return nil, ErrGone
 	}
 	if events[0].Transient {
 		m.mu.Unlock()
@@ -104,13 +110,17 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
-	_, ok := m.streams[id]
-	delete(m.streams, id)
-	m.deleted[id] = struct{}{}
-	m.mu.Unlock()
-	if ok {
-		m.hub.close(id)
+	s, ok := m.streams[id]
+	if !ok || s.deletedAt != nil {
+		m.mu.Unlock()
+		return nil
 	}
+	now := time.Now()
+	s.deletedAt = &now
+	s.events = nil
+	s.idem = map[string][]int64{}
+	m.mu.Unlock()
+	m.hub.close(id)
 	return nil
 }
 
@@ -118,7 +128,7 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		return nil, ErrNotFound
 	}
 	first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > after })
@@ -132,22 +142,72 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	return out, nil
 }
 
-func (m *memory) LastSeq(_ context.Context, id string) (int64, error) {
+func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, gone := m.deleted[id]; gone {
-		return 0, ErrGone
-	}
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || token == "" || s.token != token {
 		return 0, ErrNotFound
+	}
+	if s.deletedAt != nil {
+		return 0, ErrGone
 	}
 	return s.lastSeq, nil
 }
 
-func (m *memory) Live(stream string) (<-chan Notice, func()) {
-	return m.hub.subscribe(stream)
+func (m *memory) Rotate(_ context.Context, id string) (string, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", err
+	}
+	m.mu.Lock()
+	s, ok := m.streams[id]
+	if !ok {
+		m.mu.Unlock()
+		return "", ErrNotFound
+	}
+	if s.deletedAt != nil {
+		m.mu.Unlock()
+		return "", ErrGone
+	}
+	s.token = token
+	m.mu.Unlock()
+	m.hub.close(id)
+	return token, nil
 }
 
-func (m *memory) Ready(context.Context) error { return nil }
-func (m *memory) Close() error                { return nil }
+func (m *memory) Revoke(_ context.Context, id string) error {
+	m.mu.Lock()
+	s, ok := m.streams[id]
+	if !ok {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	if s.deletedAt != nil {
+		m.mu.Unlock()
+		return ErrGone
+	}
+	s.token = ""
+	m.mu.Unlock()
+	m.hub.close(id)
+	return nil
+}
+
+func (m *memory) Stat(_ context.Context, id string) (Stat, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.streams[id]
+	if !ok {
+		return Stat{}, ErrNotFound
+	}
+	return Stat{
+		LastSeq:   s.lastSeq,
+		CreatedAt: s.createdAt,
+		DeletedAt: s.deletedAt,
+		Readable:  s.token != "" && s.deletedAt == nil,
+	}, nil
+}
+
+func (m *memory) Live(stream string) (<-chan Notice, func()) { return m.hub.subscribe(stream) }
+func (m *memory) Ready(context.Context) error                { return nil }
+func (m *memory) Close() error                               { return nil }

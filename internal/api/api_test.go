@@ -67,18 +67,27 @@ func (r *rig) write(method, path, body string) *http.Response {
 	return r.do(method, path, body, map[string]string{"Authorization": "Bearer secret"})
 }
 
-func (r *rig) create() string {
+func (r *rig) create() (string, string) {
 	r.t.Helper()
 	resp := r.write("POST", "/v1/streams", "")
 	defer closeBody(resp)
 	if resp.StatusCode != http.StatusCreated {
 		r.t.Fatalf("create = %d", resp.StatusCode)
 	}
-	var out struct{ ID string }
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.ID == "" {
-		r.t.Fatalf("create body: %v %q", err, out.ID)
+	var out struct{ ID, Token string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.ID == "" || out.Token == "" {
+		r.t.Fatalf("create body: %v %+v", err, out)
 	}
-	return out.ID
+	return out.ID, out.Token
+}
+
+// streamURL builds the EventSource URL. after == "" means "no cursor".
+func (r *rig) streamURL(id, token, after string) string {
+	u := r.srv.URL + "/v1/streams/" + id + "?token=" + token
+	if after != "" {
+		u += "&after=" + after
+	}
+	return u
 }
 
 func (r *rig) append(id, body string) []int64 {
@@ -160,13 +169,13 @@ func TestAuth(t *testing.T) {
 
 func TestReplayLiveAndDelete(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, token := r.create()
 	if seqs := r.append(id, `{"data":"one"}`); len(seqs) != 1 || seqs[0] != 1 {
 		t.Fatalf("seqs = %v", seqs)
 	}
 	r.append(id, `{"event":"tick","data":"two"}`)
 
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
 	defer cancel()
 	defer closeBody(resp)
 
@@ -190,7 +199,7 @@ func TestReplayLiveAndDelete(t *testing.T) {
 	if _, err := br.ReadString('\n'); err == nil {
 		t.Fatal("stream stayed open after delete")
 	}
-	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusGone {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusGone {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
 	if resp := r.write("POST", "/v1/streams/"+id, `{"data":"late"}`); resp.StatusCode != http.StatusGone {
@@ -200,11 +209,11 @@ func TestReplayLiveAndDelete(t *testing.T) {
 
 func TestResumeWithLastEventID(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, token := r.create()
 	r.append(id, `{"data":"one"}`)
 	r.append(id, `{"data":"two"}`)
 
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id, map[string]string{"Last-Event-ID": "1"})
+	resp, br, cancel := openStream(t, r.streamURL(id, token, ""), map[string]string{"Last-Event-ID": "1"})
 	defer cancel()
 	defer closeBody(resp)
 	if f := readFrame(t, br); f.id != "2" || f.data != "two" {
@@ -214,8 +223,8 @@ func TestResumeWithLastEventID(t *testing.T) {
 
 func TestTransientHasNoID(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	id, token := r.create()
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
 	defer cancel()
 	defer closeBody(resp)
 
@@ -230,7 +239,7 @@ func TestTransientHasNoID(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, _ := r.create()
 
 	cases := []struct {
 		body string
@@ -260,7 +269,7 @@ func TestValidation(t *testing.T) {
 
 func TestIdempotencyHTTP(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, _ := r.create()
 	hdr := map[string]string{"Authorization": "Bearer secret", "Idempotency-Key": "k"}
 
 	first := r.do("POST", "/v1/streams/"+id, `{"data":"x"}`, hdr)
@@ -287,11 +296,11 @@ func TestNotFoundAndNow(t *testing.T) {
 		t.Fatalf("append to missing = %d", resp.StatusCode)
 	}
 
-	id := r.create()
+	id, token := r.create()
 	r.append(id, `{"data":"old"}`)
 
 	// ?after=now skips what is already stored, then follows live events.
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=now", nil)
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "now"), nil)
 	defer cancel()
 	defer closeBody(resp)
 
@@ -303,17 +312,17 @@ func TestNotFoundAndNow(t *testing.T) {
 
 func TestMissingStreamAheadCursorAndHead(t *testing.T) {
 	r := newRig(t)
-	missing := "00000000000000000000000000000000"
-	if resp := r.do("GET", "/v1/streams/"+missing, "", nil); resp.StatusCode != http.StatusNotFound {
+	missing := "00000000-0000-7000-8000-000000000000"
+	if resp := r.do("GET", "/v1/streams/"+missing+"?token=x", "", nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing stream = %d", resp.StatusCode)
 	}
 
-	id := r.create()
+	id, token := r.create()
 	r.append(id, `{"data":"one"}`)
 
 	// A cursor past the last seq can only be bogus, so the stream starts at now
 	// instead of replaying everything.
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=99", nil)
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "99"), nil)
 	defer cancel()
 	defer closeBody(resp)
 	r.append(id, `{"data":"two"}`)
@@ -328,7 +337,7 @@ func TestMissingStreamAheadCursorAndHead(t *testing.T) {
 
 func TestReplayPaging(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, token := r.create()
 
 	var body strings.Builder
 	body.WriteByte('[')
@@ -343,7 +352,7 @@ func TestReplayPaging(t *testing.T) {
 		t.Fatalf("seqs = %d entries", len(seqs))
 	}
 
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
 	defer cancel()
 	defer closeBody(resp)
 	for i := 1; i <= 450; i++ {
@@ -366,10 +375,10 @@ func TestPostgresEndToEnd(t *testing.T) {
 	}
 	r := newRigWith(t, st)
 
-	id := r.create()
+	id, token := r.create()
 	r.append(id, `{"data":"one"}`)
 
-	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=0", nil)
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
 	defer cancel()
 	defer closeBody(resp)
 	if f := readFrame(t, br); f.id != "1" || f.data != "one" {
@@ -383,14 +392,14 @@ func TestPostgresEndToEnd(t *testing.T) {
 
 	del := r.write("DELETE", "/v1/streams/"+id, "")
 	_ = del.Body.Close()
-	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusGone {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusGone {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
 }
 
 func TestMetricsEndpoint(t *testing.T) {
 	r := newRig(t)
-	id := r.create()
+	id, _ := r.create()
 	r.append(id, `{"data":"x"}`)
 
 	resp, err := http.Get(r.srv.URL + "/metrics")
@@ -415,6 +424,104 @@ func TestMetricsEndpoint(t *testing.T) {
 			t.Errorf("metrics output misses %q", want)
 		}
 	}
+}
+
+func TestReaderTokens(t *testing.T) {
+	r := newRig(t)
+	id, token := r.create()
+	r.append(id, `{"data":"one"}`)
+
+	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token = %d", resp.StatusCode)
+	}
+	if resp := r.do("GET", "/v1/streams/"+id+"?token=wrong", "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong token = %d", resp.StatusCode)
+	}
+
+	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
+	defer cancel()
+	defer closeBody(resp)
+	if f := readFrame(t, br); f.id != "1" {
+		t.Fatalf("frame = %+v", f)
+	}
+
+	if st := r.stat(id); st.LastSeq != 1 || !st.Readable || st.DeletedAt != nil {
+		t.Fatalf("stat = %+v", st)
+	}
+
+	// Rotate: the old token dies and the open reader is disconnected.
+	rotated := r.rotate(id)
+	if _, err := br.ReadString('\n'); err == nil {
+		t.Fatal("reader stayed open after rotate")
+	}
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("old token after rotate = %d", resp.StatusCode)
+	}
+	probe := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil)
+	if probe.StatusCode != http.StatusOK {
+		t.Fatalf("rotated token = %d", probe.StatusCode)
+	}
+	_ = probe.Body.Close()
+
+	// Revoke: no token opens the stream until the next rotate.
+	if code := r.revoke(id); code != http.StatusNoContent {
+		t.Fatalf("revoke = %d", code)
+	}
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("token after revoke = %d", resp.StatusCode)
+	}
+	if st := r.stat(id); st.Readable {
+		t.Fatalf("readable after revoke = %+v", st)
+	}
+	rotated = r.rotate(id)
+	if st := r.stat(id); !st.Readable {
+		t.Fatalf("readable after rotate = %+v", st)
+	}
+
+	// Delete wins over the token: 410, not 404.
+	del := r.write("DELETE", "/v1/streams/"+id, "")
+	_ = del.Body.Close()
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusGone {
+		t.Fatalf("get after delete = %d", resp.StatusCode)
+	}
+	if st := r.stat(id); st.DeletedAt == nil || st.Readable {
+		t.Fatalf("stat after delete = %+v", st)
+	}
+}
+
+func (r *rig) stat(id string) statResponse {
+	r.t.Helper()
+	resp := r.write("GET", "/v1/streams/"+id+"/stat", "")
+	defer closeBody(resp)
+	if resp.StatusCode != http.StatusOK {
+		r.t.Fatalf("stat = %d", resp.StatusCode)
+	}
+	var out statResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		r.t.Fatal(err)
+	}
+	return out
+}
+
+func (r *rig) rotate(id string) string {
+	r.t.Helper()
+	resp := r.write("POST", "/v1/streams/"+id+"/rotate", "")
+	defer closeBody(resp)
+	if resp.StatusCode != http.StatusOK {
+		r.t.Fatalf("rotate = %d", resp.StatusCode)
+	}
+	var out struct{ Token string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Token == "" {
+		r.t.Fatalf("rotate body: %v %+v", err, out)
+	}
+	return out.Token
+}
+
+func (r *rig) revoke(id string) int {
+	r.t.Helper()
+	resp := r.write("POST", "/v1/streams/"+id+"/revoke", "")
+	_ = resp.Body.Close()
+	return resp.StatusCode
 }
 
 func TestFormatEventSplitsLines(t *testing.T) {

@@ -29,6 +29,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		s.fail(w, http.StatusUnauthorized, "token required")
+		return
+	}
 	cursor := r.Header.Get("Last-Event-ID")
 	if cursor == "" {
 		cursor = r.URL.Query().Get("after")
@@ -39,7 +44,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	live, unsubscribe := s.store.Live(id)
 	defer unsubscribe()
 
-	last, err := s.store.LastSeq(r.Context(), id)
+	last, err := s.store.OpenReader(r.Context(), id, token)
 	if errors.Is(err, store.ErrNotFound) {
 		s.fail(w, http.StatusNotFound, "stream not found")
 		return

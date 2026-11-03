@@ -32,7 +32,7 @@ func TestPostgresConcurrentSeqs(t *testing.T) {
 	defer func() { _ = s.Close() }()
 
 	ctx := context.Background()
-	id, err := s.Create(ctx)
+	id, token, err := s.Create(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestPostgresConcurrentSeqs(t *testing.T) {
 			t.Fatalf("row %d has seq %d, want %d", i, row.Seq, i+1)
 		}
 	}
-	if last, err := s.LastSeq(ctx, id); err != nil || last != writers*each {
+	if last, err := s.OpenReader(ctx, id, token); err != nil || last != writers*each {
 		t.Fatalf("last = %d, %v", last, err)
 	}
 }

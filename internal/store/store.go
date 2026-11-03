@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -31,9 +33,16 @@ type Row struct {
 	CreatedAt time.Time
 }
 
+// Stat is the operational view of one stream.
+type Stat struct {
+	LastSeq   int64
+	CreatedAt time.Time
+	DeletedAt *time.Time
+	Readable  bool
+}
+
 // Notice wakes readers of one stream. A zero Notice means "read what is
 // stored"; a transient one also carries an event that was never stored.
-// Deleting a stream closes its subscribers' channels instead.
 type Notice struct {
 	Transient bool
 	Event     string
@@ -43,14 +52,19 @@ type Notice struct {
 // Store persists streams and wakes local readers. Append requires validated,
 // non-empty events; seqs are per stream, assigned in commit order, never reused.
 type Store interface {
-	// Create mints a stream. A retried create makes a new one: the caller
-	// owns the id, so an unknown id is simply lost.
-	Create(ctx context.Context) (string, error)
+	// Create mints a stream and the token that opens its reads.
+	Create(ctx context.Context) (id, token string, err error)
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
 	Delete(ctx context.Context, stream string) error
 	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
-	LastSeq(ctx context.Context, stream string) (int64, error)
+	// OpenReader authorizes a token and returns the high-water seq.
+	OpenReader(ctx context.Context, stream, token string) (int64, error)
+	// Rotate mints a new token, invalidating the old one.
+	Rotate(ctx context.Context, stream string) (string, error)
+	// Revoke clears the token until the next Rotate.
+	Revoke(ctx context.Context, stream string) error
+	Stat(ctx context.Context, stream string) (Stat, error)
 	Live(stream string) (<-chan Notice, func())
 	// Ready reports whether this node can serve: the database answers and,
 	// in postgres mode, notifications are flowing.
@@ -58,8 +72,17 @@ type Store interface {
 	Close() error
 }
 
-// newID returns 128 random bits, the whole identity of a stream.
-func newID() (string, error) {
+// newStreamID returns a time-sortable UUIDv7, the public stream id.
+func newStreamID() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// newToken returns 128 random bits, the secret that opens one stream.
+func newToken() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err

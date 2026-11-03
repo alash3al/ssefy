@@ -83,21 +83,25 @@ func migrate(ctx context.Context, dsn string) error {
 	return err
 }
 
-func (p *postgres) Create(ctx context.Context) (string, error) {
+func (p *postgres) Create(ctx context.Context) (string, string, error) {
 	for range 3 {
-		id, err := newID()
+		id, err := newStreamID()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id) VALUES ($1)", id)
+		token, err := newToken()
+		if err != nil {
+			return "", "", err
+		}
+		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id, token) VALUES ($1, $2)", id, token)
 		if err == nil {
-			return id, nil
+			return id, token, nil
 		}
 		if !isUnique(err) {
-			return "", err
+			return "", "", err
 		}
 	}
-	return "", errors.New("could not allocate a stream id")
+	return "", "", errors.New("could not allocate a stream id")
 }
 
 func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKey string) ([]int64, error) {
@@ -237,11 +241,7 @@ func (p *postgres) Delete(ctx context.Context, id string) error {
 	if tag.RowsAffected() == 0 {
 		return tx.Commit(ctx) // already gone or never existed: no notice
 	}
-	payload, err := encodeNotice(notice{ID: id, Deleted: true})
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
+	if err := notifyClose(ctx, tx, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -270,17 +270,101 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	return nil, err
 }
 
-func (p *postgres) LastSeq(ctx context.Context, id string) (int64, error) {
+func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, error) {
 	var n int64
 	var deletedAt *time.Time
-	err := p.pool.QueryRow(ctx, "SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&n, &deletedAt)
+	err := p.pool.QueryRow(ctx,
+		"SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1 AND token = $2",
+		id, token).Scan(&n, &deletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound
 	}
-	if err == nil && deletedAt != nil {
+	if err != nil {
+		return 0, err
+	}
+	if deletedAt != nil {
 		return 0, ErrGone
 	}
-	return n, err
+	return n, nil
+}
+
+func (p *postgres) Rotate(ctx context.Context, id string) (string, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", err
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = $2 WHERE id = $1 AND deleted_at IS NULL", id, token)
+	if err != nil {
+		return "", err
+	}
+	if tag.RowsAffected() == 0 {
+		return "", streamErr(ctx, tx, id)
+	}
+	if err := notifyClose(ctx, tx, id); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (p *postgres) Revoke(ctx context.Context, id string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = NULL WHERE id = $1 AND deleted_at IS NULL", id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return streamErr(ctx, tx, id)
+	}
+	if err := notifyClose(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (p *postgres) Stat(ctx context.Context, id string) (Stat, error) {
+	var st Stat
+	var hasToken bool
+	err := p.pool.QueryRow(ctx,
+		"SELECT last_seq, created_at, deleted_at, token IS NOT NULL FROM ssefy_streams WHERE id = $1",
+		id).Scan(&st.LastSeq, &st.CreatedAt, &st.DeletedAt, &hasToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Stat{}, ErrNotFound
+	}
+	if err != nil {
+		return Stat{}, err
+	}
+	st.Readable = hasToken && st.DeletedAt == nil
+	return st, nil
+}
+
+// streamErr explains an UPDATE that matched no live row.
+func streamErr(ctx context.Context, tx pgx.Tx, id string) error {
+	var deletedAt *time.Time
+	err := tx.QueryRow(ctx, "SELECT deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&deletedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if deletedAt != nil {
+		return ErrGone
+	}
+	return ErrNotFound
 }
 
 func (p *postgres) Live(stream string) (<-chan Notice, func()) {
