@@ -125,19 +125,13 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 		return nil, ErrGone
 	}
 
-	idemHash := ""
 	if idemKey != "" {
-		idemHash = hashEvents(events)
-		var storedHash string
 		var storedSeqs []int64
 		err := tx.QueryRow(ctx,
-			"SELECT hash, seqs FROM ssefy_appends WHERE stream_id = $1 AND key = $2",
-			id, idemKey).Scan(&storedHash, &storedSeqs)
+			"SELECT seqs FROM ssefy_appends WHERE stream_id = $1 AND key = $2",
+			id, idemKey).Scan(&storedSeqs)
 		switch {
 		case err == nil:
-			if storedHash != idemHash {
-				return nil, ErrKeyMismatch
-			}
 			return storedSeqs, nil
 		case errors.Is(err, pgx.ErrNoRows):
 			// first push
@@ -174,8 +168,8 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 
 	if idemKey != "" {
 		if _, err := tx.Exec(ctx,
-			"INSERT INTO ssefy_appends (stream_id, key, hash, seqs) VALUES ($1, $2, $3, $4)",
-			id, idemKey, idemHash, seqs); err != nil {
+			"INSERT INTO ssefy_appends (stream_id, key, seqs) VALUES ($1, $2, $3)",
+			id, idemKey, seqs); err != nil {
 			return nil, err
 		}
 	}

@@ -279,11 +279,6 @@ func TestIdempotencyHTTP(t *testing.T) {
 		t.Fatalf("retry seqs = %v, want %v", again.Seqs, out.Seqs)
 	}
 
-	third := r.do("POST", "/v1/streams/"+id, `{"data":"different"}`, hdr)
-	defer closeBody(third)
-	if third.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("mismatch = %d", third.StatusCode)
-	}
 }
 
 func TestNotFoundAndNow(t *testing.T) {

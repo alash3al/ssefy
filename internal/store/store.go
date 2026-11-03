@@ -4,18 +4,15 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"time"
 )
 
 var (
-	ErrNotFound    = errors.New("stream not found")
-	ErrKeyMismatch = errors.New("idempotency key reused with a different body")
-	ErrTooLarge    = errors.New("transient event too large")
-	ErrGone        = errors.New("stream deleted")
+	ErrNotFound = errors.New("stream not found")
+	ErrTooLarge = errors.New("transient event too large")
+	ErrGone     = errors.New("stream deleted")
 )
 
 // Event is one pushed event. Event defaults to "message" before it reaches a Store.
@@ -68,12 +65,4 @@ func newID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
-}
-
-// hashEvents is the idempotency fingerprint. Events have a fixed field order,
-// so encoding/json output is stable.
-func hashEvents(events []Event) string {
-	b, _ := json.Marshal(events)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }

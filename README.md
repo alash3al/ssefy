@@ -49,7 +49,7 @@ Deletion removes the events, append records and create keys; the id stays as a t
 - `data` is a string. Encode JSON inside it when you need structure.
 - `transient` events are delivered live only, never stored, and carry no `id:`. A push is either all stored or all transient.
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
-- `Idempotency-Key` makes a retried push return the original seqs and deliver once. The same key with a different body is `422`.
+- `Idempotency-Key` makes a retried push return the original seqs and deliver once; a retry's body is ignored.
 
 Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys. A transient event must also fit one NOTIFY payload: about 7.8 KiB after JSON encoding. Idempotency keys are per stream.
 

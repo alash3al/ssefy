@@ -52,9 +52,6 @@ func testLifecycle(t *testing.T, s Store) {
 	if got, err := s.Append(ctx, id, []Event{{Event: "message", Data: "three"}}, "k"); err != nil || got[0] != 3 {
 		t.Fatalf("replay = %v, %v", got, err)
 	}
-	if _, err := s.Append(ctx, id, []Event{{Event: "message", Data: "other"}}, "k"); !errors.Is(err, ErrKeyMismatch) {
-		t.Fatalf("mismatch err = %v", err)
-	}
 
 	// An array push with one key works and replays the same seqs.
 	batch := []Event{{Event: "message", Data: "m1"}, {Event: "message", Data: "m2"}}

@@ -18,17 +18,12 @@ type memory struct {
 type memStream struct {
 	lastSeq int64
 	events  []memEvent
-	idem    map[string]memIdem
+	idem    map[string][]int64
 }
 
 type memEvent struct {
 	Row         Row
 	CollapseKey string
-}
-
-type memIdem struct {
-	hash string
-	seqs []int64
 }
 
 func NewMemory() Store {
@@ -45,7 +40,7 @@ func (m *memory) Create(context.Context) (string, error) {
 		return "", err
 	}
 	m.mu.Lock()
-	m.streams[id] = &memStream{idem: make(map[string]memIdem)}
+	m.streams[id] = &memStream{idem: make(map[string][]int64)}
 	m.mu.Unlock()
 	return id, nil
 }
@@ -71,15 +66,10 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 		}
 		return nil, nil
 	}
-	hash := ""
 	if idemKey != "" {
-		hash = hashEvents(events)
 		if prev, ok := s.idem[idemKey]; ok {
 			m.mu.Unlock()
-			if prev.hash != hash {
-				return nil, ErrKeyMismatch
-			}
-			return prev.seqs, nil
+			return prev, nil
 		}
 	}
 	for _, ev := range events {
@@ -104,7 +94,7 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 		})
 	}
 	if idemKey != "" {
-		s.idem[idemKey] = memIdem{hash: hash, seqs: seqs}
+		s.idem[idemKey] = seqs
 	}
 	m.mu.Unlock()
 
