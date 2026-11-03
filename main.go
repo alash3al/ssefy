@@ -47,7 +47,6 @@ func main() {
 	srv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           a.Handler(),
-		Protocols:         protocols(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -72,16 +71,6 @@ func main() {
 			log.Error("shutdown", "err", err)
 		}
 	}
-}
-
-// protocols serves HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port.
-// Browsers only use HTTP/2 over TLS, so they talk HTTP/2 to the proxy; h2c is
-// for Go clients and proxies that speak it upstream.
-func protocols() *http.Protocols {
-	p := new(http.Protocols)
-	p.SetHTTP1(true)
-	p.SetUnencryptedHTTP2(true)
-	return p
 }
 
 func storeKind(dsn string) string {

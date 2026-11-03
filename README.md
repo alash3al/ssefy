@@ -69,7 +69,23 @@ Settings come from the environment. `./.env` is loaded first when it exists, the
 | `SSEFY_CORS_ORIGINS` | `*` with `SSEFY_DEV=true`, comma separated |
 | `SSEFY_DEV` | `false` |
 
-The server speaks HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port. Browsers only use HTTP/2 over TLS, so terminate TLS at the proxy and let it speak HTTP/2 to the browser; that is also what lifts the six-connections-per-origin limit on SSE. h2c here is for the proxy or a Go client.
+## Behind a proxy
+
+Terminate TLS at the proxy. ssefy speaks HTTP/1.1, which every proxy handles; browsers still get HTTP/2 from the proxy, and that is what lifts their six-connections-per-origin limit on SSE.
+
+SSE needs buffering off and a read timeout longer than the 15s heartbeat:
+
+```nginx
+location /v1/ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+}
+```
+
+ssefy sends `X-Accel-Buffering: no` and a `: ping` comment every 15s, so any proxy idle timeout above that works.
 
 ## Tests
 
