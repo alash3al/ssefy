@@ -15,9 +15,10 @@ type memory struct {
 }
 
 type memStream struct {
-	lastSeq int64
-	events  []memEvent
-	idem    map[string]memIdem
+	createKey string
+	lastSeq   int64
+	events    []memEvent
+	idem      map[string]memIdem
 }
 
 type memEvent struct {
@@ -50,7 +51,7 @@ func (m *memory) Create(_ context.Context, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	m.streams[id] = &memStream{idem: make(map[string]memIdem)}
+	m.streams[id] = &memStream{createKey: key, idem: make(map[string]memIdem)}
 	if key != "" {
 		m.createKeys[key] = id
 	}
@@ -116,8 +117,11 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
-	_, ok := m.streams[id]
+	s, ok := m.streams[id]
 	delete(m.streams, id)
+	if ok && s.createKey != "" {
+		delete(m.createKeys, s.createKey)
+	}
 	m.mu.Unlock()
 	if ok {
 		m.hub.close(id)

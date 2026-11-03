@@ -112,6 +112,17 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("transient event was stored: %d -> %d", len(before), len(after))
 	}
 
+	if err := s.Delete(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	third, err := s.Create(ctx, "create-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("create key was not released by delete")
+	}
+
 	if err := s.Delete(ctx, id); err != nil {
 		t.Fatal(err)
 	}

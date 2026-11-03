@@ -57,25 +57,65 @@ func migrate(dsn string) error {
 }
 
 func (p *postgres) Create(ctx context.Context, key string) (string, error) {
+	if key != "" {
+		return p.createWithKey(ctx, key)
+	}
 	for range 3 {
 		id, err := newID()
 		if err != nil {
 			return "", err
 		}
-		_, err = p.pool.Exec(ctx,
-			`INSERT INTO ssefy_streams (id, create_key) VALUES ($1, nullif($2, ''))
-			 ON CONFLICT (create_key) DO NOTHING`, id, key)
+		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id) VALUES ($1)", id)
+		if err == nil {
+			return id, nil
+		}
+		if !isUnique(err) {
+			return "", err
+		}
+	}
+	return "", errors.New("could not allocate a stream id")
+}
+
+// createWithKey inserts the stream and its key atomically. When the key is
+// already taken the transaction rolls back, so no orphan stream is left.
+func (p *postgres) createWithKey(ctx context.Context, key string) (string, error) {
+	for range 3 {
+		id, err := newID()
 		if err != nil {
+			return "", err
+		}
+		tx, err := p.pool.Begin(ctx)
+		if err != nil {
+			return "", err
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO ssefy_streams (id) VALUES ($1)", id); err != nil {
+			_ = tx.Rollback(ctx)
 			if isUnique(err) {
-				continue // id collision
+				continue
 			}
 			return "", err
 		}
-		if key == "" {
+		tag, err := tx.Exec(ctx,
+			"INSERT INTO ssefy_create_keys (key, stream_id) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING",
+			key, id)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return "", err
+		}
+		if tag.RowsAffected() == 1 {
+			if err := tx.Commit(ctx); err != nil {
+				return "", err
+			}
 			return id, nil
 		}
+		_ = tx.Rollback(ctx)
+
 		var existing string
-		if err := p.pool.QueryRow(ctx, "SELECT id FROM ssefy_streams WHERE create_key = $1", key).Scan(&existing); err != nil {
+		err = p.pool.QueryRow(ctx, "SELECT stream_id FROM ssefy_create_keys WHERE key = $1", key).Scan(&existing)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // the other create was deleted in between
+		}
+		if err != nil {
 			return "", err
 		}
 		return existing, nil
