@@ -18,6 +18,7 @@ type memStream struct {
 	token     string
 	lastSeq   int64
 	createdAt time.Time
+	deletedAt *time.Time
 	events    []memEvent
 	idem      map[string][]int64
 }
@@ -54,7 +55,7 @@ func (m *memory) Create(context.Context) (string, string, error) {
 func (m *memory) Append(_ context.Context, id string, events []Event, idemKey string) ([]int64, error) {
 	m.mu.Lock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		m.mu.Unlock()
 		return nil, ErrNotFound
 	}
@@ -106,12 +107,17 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
-	_, ok := m.streams[id]
-	delete(m.streams, id)
-	m.mu.Unlock()
-	if ok {
-		m.hub.close(id)
+	s, ok := m.streams[id]
+	if !ok || s.deletedAt != nil {
+		m.mu.Unlock()
+		return nil
 	}
+	now := time.Now()
+	s.deletedAt = &now
+	s.events = nil
+	s.idem = map[string][]int64{}
+	m.mu.Unlock()
+	m.hub.close(id)
 	return nil
 }
 
@@ -119,7 +125,7 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		return nil, ErrNotFound
 	}
 	first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > after })
@@ -137,7 +143,7 @@ func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		return 0, ErrNotFound
 	}
 	if token == "" || !sameToken(s.token, token) {
@@ -153,7 +159,7 @@ func (m *memory) Rotate(_ context.Context, id string) (string, error) {
 	}
 	m.mu.Lock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		m.mu.Unlock()
 		return "", ErrNotFound
 	}
@@ -166,7 +172,7 @@ func (m *memory) Rotate(_ context.Context, id string) (string, error) {
 func (m *memory) Revoke(_ context.Context, id string) error {
 	m.mu.Lock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		m.mu.Unlock()
 		return ErrNotFound
 	}
@@ -180,7 +186,7 @@ func (m *memory) Stat(_ context.Context, id string) (Stat, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok {
+	if !ok || s.deletedAt != nil {
 		return Stat{}, ErrNotFound
 	}
 	return Stat{
