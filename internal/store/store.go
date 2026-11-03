@@ -51,6 +51,7 @@ type Store interface {
 	Create(ctx context.Context, key string) (string, error)
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
 	Delete(ctx context.Context, stream string) error
+	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
 	LastSeq(ctx context.Context, stream string) (int64, error)
 	Live(stream string) (<-chan Notice, func())

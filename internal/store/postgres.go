@@ -276,17 +276,12 @@ func (p *postgres) Delete(ctx context.Context, id string) error {
 }
 
 func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) ([]Row, error) {
-	if limit <= 0 {
-		limit = 500
-	}
 	rows, err := p.pool.Query(ctx,
 		"SELECT seq, event, data, created_at FROM ssefy_events WHERE stream_id = $1 AND seq > $2 ORDER BY seq LIMIT $3",
 		id, after, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	out, err := pgx.CollectRows(rows, pgx.RowToStructByName[Row])
 	if err != nil {
 		return nil, err
@@ -329,17 +324,11 @@ func (p *postgres) Close() error {
 }
 
 func collapseKeys(events []Event) []string {
-	seen := make(map[string]struct{}, len(events))
 	var keys []string
 	for _, ev := range events {
-		if ev.CollapseKey == "" {
-			continue
+		if ev.CollapseKey != "" {
+			keys = append(keys, ev.CollapseKey)
 		}
-		if _, ok := seen[ev.CollapseKey]; ok {
-			continue
-		}
-		seen[ev.CollapseKey] = struct{}{}
-		keys = append(keys, ev.CollapseKey)
 	}
 	return keys
 }

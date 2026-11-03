@@ -18,16 +18,22 @@ import (
 )
 
 func main() {
-	envFile := flag.String("env-file", "", "path to .env (default ./.env)")
-	flag.Parse()
-
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(log) // the store logs through slog.Default
 
+	if err := run(log); err != nil {
+		log.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run(log *slog.Logger) error {
+	envFile := flag.String("env-file", "", "path to .env (default ./.env)")
+	flag.Parse()
+
 	cfg, err := config.Load(*envFile)
 	if err != nil {
-		log.Error("config", "err", err)
-		os.Exit(1)
+		return err
 	}
 	if cfg.Dev {
 		log.Warn("development mode: SSEFY_SERVER_SECRET defaults to \"dev\"")
@@ -38,8 +44,7 @@ func main() {
 
 	st, err := openStore(ctx, cfg.Store)
 	if err != nil {
-		log.Error("store", "err", err)
-		os.Exit(1)
+		return err
 	}
 	defer func() { _ = st.Close() }()
 
@@ -62,16 +67,16 @@ func main() {
 	select {
 	case err := <-errs:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Error("serve", "err", err)
-			os.Exit(1)
+			return err
 		}
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdown); err != nil {
-			log.Error("shutdown", "err", err)
+			return err
 		}
 	}
+	return nil
 }
 
 func storeKind(dsn string) string {

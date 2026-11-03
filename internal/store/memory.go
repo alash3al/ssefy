@@ -79,8 +79,9 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 		}
 		return nil, nil
 	}
-	hash := hashEvents(events)
+	hash := ""
 	if idemKey != "" {
+		hash = hashEvents(events)
 		if prev, ok := s.idem[idemKey]; ok {
 			m.mu.Unlock()
 			if prev.hash != hash {
@@ -111,9 +112,6 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 		})
 	}
 	if idemKey != "" {
-		if s.idem == nil {
-			s.idem = make(map[string]memIdem)
-		}
 		s.idem[idemKey] = memIdem{hash: hash, seqs: seqs}
 	}
 	m.mu.Unlock()
