@@ -15,6 +15,7 @@ var (
 	ErrNotFound    = errors.New("stream not found")
 	ErrKeyMismatch = errors.New("idempotency key reused with a different body")
 	ErrTooLarge    = errors.New("transient event too large")
+	ErrGone        = errors.New("stream deleted")
 )
 
 // Event is one pushed event. Event defaults to "message" before it reaches a Store.

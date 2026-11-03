@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -136,12 +137,16 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var last int64
-	err = tx.QueryRow(ctx, "SELECT last_seq FROM ssefy_streams WHERE id = $1 FOR UPDATE", id).Scan(&last)
+	var deletedAt *time.Time
+	err = tx.QueryRow(ctx, "SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1 FOR UPDATE", id).Scan(&last, &deletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if deletedAt != nil {
+		return nil, ErrGone
 	}
 
 	idemHash := ""
@@ -246,8 +251,17 @@ func (p *postgres) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, "DELETE FROM ssefy_streams WHERE id = $1", id); err != nil {
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL", id)
+	if err != nil {
 		return err
+	}
+	for _, table := range []string{"ssefy_events", "ssefy_appends", "ssefy_create_keys"} {
+		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE stream_id = $1", id); err != nil {
+			return err
+		}
+	}
+	if tag.RowsAffected() == 0 {
+		return tx.Commit(ctx) // already gone or never existed: no notice
 	}
 	payload, err := encodeNotice(notice{ID: id, Deleted: true})
 	if err != nil {
@@ -287,7 +301,7 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	}
 
 	var one int
-	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
+	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1 AND deleted_at IS NULL", id).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -296,9 +310,13 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 
 func (p *postgres) LastSeq(ctx context.Context, id string) (int64, error) {
 	var n int64
-	err := p.pool.QueryRow(ctx, "SELECT last_seq FROM ssefy_streams WHERE id = $1", id).Scan(&n)
+	var deletedAt *time.Time
+	err := p.pool.QueryRow(ctx, "SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&n, &deletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound
+	}
+	if err == nil && deletedAt != nil {
+		return 0, ErrGone
 	}
 	return n, err
 }

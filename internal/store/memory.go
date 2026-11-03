@@ -13,6 +13,7 @@ type memory struct {
 	hub        *hub
 	streams    map[string]*memStream
 	createKeys map[string]string
+	deleted    map[string]struct{}
 }
 
 type memStream struct {
@@ -37,6 +38,7 @@ func NewMemory() Store {
 		hub:        newHub(),
 		streams:    make(map[string]*memStream),
 		createKeys: make(map[string]string),
+		deleted:    make(map[string]struct{}),
 	}
 }
 
@@ -61,6 +63,10 @@ func (m *memory) Create(_ context.Context, key string) (string, error) {
 
 func (m *memory) Append(_ context.Context, id string, events []Event, idemKey string) ([]int64, error) {
 	m.mu.Lock()
+	if _, gone := m.deleted[id]; gone {
+		m.mu.Unlock()
+		return nil, ErrGone
+	}
 	s, ok := m.streams[id]
 	if !ok {
 		m.mu.Unlock()
@@ -119,9 +125,12 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	s, ok := m.streams[id]
-	delete(m.streams, id)
-	if ok && s.createKey != "" {
-		delete(m.createKeys, s.createKey)
+	if ok {
+		delete(m.streams, id)
+		m.deleted[id] = struct{}{}
+		if s.createKey != "" {
+			delete(m.createKeys, s.createKey)
+		}
 	}
 	m.mu.Unlock()
 	if ok {
@@ -151,6 +160,9 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 func (m *memory) LastSeq(_ context.Context, id string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, gone := m.deleted[id]; gone {
+		return 0, ErrGone
+	}
 	s, ok := m.streams[id]
 	if !ok {
 		return 0, ErrNotFound

@@ -184,8 +184,11 @@ func TestReplayLiveAndDelete(t *testing.T) {
 	if _, err := br.ReadString('\n'); err == nil {
 		t.Fatal("stream stayed open after delete")
 	}
-	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusNotFound {
+	if resp := r.do("GET", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusGone {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
+	}
+	if resp := r.write("POST", "/v1/streams/"+id, `{"data":"late"}`); resp.StatusCode != http.StatusGone {
+		t.Fatalf("append after delete = %d", resp.StatusCode)
 	}
 }
 

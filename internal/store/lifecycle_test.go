@@ -161,10 +161,10 @@ func testLifecycle(t *testing.T, s Store) {
 	if _, err := s.Read(ctx, id, 0, 10); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("read after delete = %v", err)
 	}
-	if _, err := s.LastSeq(ctx, id); !errors.Is(err, ErrNotFound) {
+	if _, err := s.LastSeq(ctx, id); !errors.Is(err, ErrGone) {
 		t.Fatalf("last after delete = %v", err)
 	}
-	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrGone) {
 		t.Fatalf("append after delete = %v", err)
 	}
 }

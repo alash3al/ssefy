@@ -44,6 +44,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusNotFound, "stream not found")
 		return
 	}
+	if errors.Is(err, store.ErrGone) {
+		s.fail(w, http.StatusGone, "stream deleted")
+		return
+	}
 	if err != nil {
 		s.log.Error("last seq", "err", err)
 		s.fail(w, http.StatusInternalServerError, "store error")

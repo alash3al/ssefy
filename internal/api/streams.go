@@ -67,6 +67,9 @@ func (s *Server) append(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrNotFound):
 		s.fail(w, http.StatusNotFound, "stream not found")
 		return
+	case errors.Is(err, store.ErrGone):
+		s.fail(w, http.StatusGone, "stream deleted")
+		return
 	case errors.Is(err, store.ErrKeyMismatch):
 		s.fail(w, http.StatusUnprocessableEntity, err.Error())
 		return

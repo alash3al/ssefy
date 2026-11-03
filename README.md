@@ -28,12 +28,14 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | Call | Auth | Does |
 | --- | --- | --- |
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"..."}`. `Idempotency-Key` makes a retry return the same id |
-| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` if the stream is gone |
-| `GET /v1/streams/{id}` | Open | SSE: replays, then streams live |
+| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown, `410` deleted |
+| `GET /v1/streams/{id}` | Open | SSE: replays, then streams live. `404` unknown, `410` deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
 | `GET /metrics` | Open | Prometheus text for this node |
 
 Stream IDs are 128 random bits. They are the only thing protecting reads, so treat an ID as a bearer token and keep it out of logs.
+
+Deletion removes the events, append records and create keys; the id stays as a tombstone so later reads answer `410 Gone`. An id that never existed is `404`.
 
 ## Events
 
@@ -56,7 +58,7 @@ Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255
 - `?after=0`: replay everything.
 - `?after=now`: skip history.
 - `Last-Event-ID` wins over `?after`.
-- Deleted stream: open connections close, the next connect gets `404` (EventSource stops reconnecting on a non-200).
+- Deleted stream: open connections close, the next connect gets `410`; an unknown id gets `404`. EventSource stops reconnecting on either.
 
 ## Configuration
 
