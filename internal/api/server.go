@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/alash3al/ssefy/internal/store"
 )
 
+// Server serves the ssefy HTTP API.
 type Server struct {
 	store   store.Store
 	secret  string
@@ -26,6 +28,7 @@ type Server struct {
 	once sync.Once
 }
 
+// New wires a Server to a store. secret guards writes; origins limits CORS.
 func New(st store.Store, secret string, origins []string, log *slog.Logger) *Server {
 	return &Server{
 		store:   st,
@@ -41,6 +44,7 @@ func (s *Server) Close() {
 	s.once.Do(func() { close(s.done) })
 }
 
+// Handler returns the routes wrapped in CORS and request metrics.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/streams", s.auth(s.create))
@@ -53,6 +57,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", metrics.Handler())
 	return instrument(s.cors(mux))
+}
+
+// failStream answers the lookup failures every stream endpoint shares: 404 for
+// an unknown id or a token that does not open it, 410 for a tombstone.
+func (s *Server) failStream(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		s.fail(w, http.StatusNotFound, "stream not found")
+		return true
+	case errors.Is(err, store.ErrGone):
+		s.fail(w, http.StatusGone, "stream deleted")
+		return true
+	}
+	return false
 }
 
 // instrument records every request, including CORS preflights. For a stream

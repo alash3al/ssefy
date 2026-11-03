@@ -1,3 +1,4 @@
+// Command ssefy serves server-sent-event streams backed by PostgreSQL.
 package main
 
 import (

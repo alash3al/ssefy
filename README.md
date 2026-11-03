@@ -29,8 +29,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | --- | --- | --- |
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown, `410` deleted |
-| `GET /v1/streams/{id}?token=…` | Stream token | SSE: replays, then streams live. `401` no token, `404` wrong token or unknown, `410` deleted |
-| `GET /v1/streams/{id}` | Stream token | Same endpoint; the token may be `Authorization: Bearer <token>` instead of `?token=` |
+| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token, `404` wrong token or unknown, `410` deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
 | `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","deleted_at","readable"}`, `404` unknown |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |

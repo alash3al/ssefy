@@ -57,13 +57,10 @@ func (s *Server) append(w http.ResponseWriter, r *http.Request) {
 	}
 
 	seqs, err := s.store.Append(r.Context(), r.PathValue("id"), events, idemKey)
+	if s.failStream(w, err) {
+		return
+	}
 	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.fail(w, http.StatusNotFound, "stream not found")
-		return
-	case errors.Is(err, store.ErrGone):
-		s.fail(w, http.StatusGone, "stream deleted")
-		return
 	case errors.Is(err, store.ErrTooLarge):
 		s.fail(w, http.StatusRequestEntityTooLarge, err.Error())
 		return

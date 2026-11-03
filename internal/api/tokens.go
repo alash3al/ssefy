@@ -1,11 +1,8 @@
 package api
 
 import (
-	"errors"
 	"net/http"
 	"time"
-
-	"github.com/alash3al/ssefy/internal/store"
 )
 
 type statResponse struct {
@@ -17,8 +14,7 @@ type statResponse struct {
 
 func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
 	st, err := s.store.Stat(r.Context(), r.PathValue("id"))
-	if errors.Is(err, store.ErrNotFound) {
-		s.fail(w, http.StatusNotFound, "stream not found")
+	if s.failStream(w, err) {
 		return
 	}
 	if err != nil {
@@ -36,14 +32,10 @@ func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	token, err := s.store.Rotate(r.Context(), r.PathValue("id"))
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.fail(w, http.StatusNotFound, "stream not found")
+	if s.failStream(w, err) {
 		return
-	case errors.Is(err, store.ErrGone):
-		s.fail(w, http.StatusGone, "stream deleted")
-		return
-	case err != nil:
+	}
+	if err != nil {
 		s.log.Error("rotate", "err", err)
 		s.fail(w, http.StatusInternalServerError, "could not rotate token")
 		return
@@ -53,14 +45,10 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	err := s.store.Revoke(r.Context(), r.PathValue("id"))
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		s.fail(w, http.StatusNotFound, "stream not found")
+	if s.failStream(w, err) {
 		return
-	case errors.Is(err, store.ErrGone):
-		s.fail(w, http.StatusGone, "stream deleted")
-		return
-	case err != nil:
+	}
+	if err != nil {
 		s.log.Error("revoke", "err", err)
 		s.fail(w, http.StatusInternalServerError, "could not revoke token")
 		return

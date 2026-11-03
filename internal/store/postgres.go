@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	// Registers "pgx" with database/sql for goose.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -38,6 +39,7 @@ type postgres struct {
 // LISTEN connection, so a one-second blip does not pull it from the balancer.
 const listenerGrace = 30 * time.Second
 
+// OpenPostgres migrates the schema, opens the pool and starts the listener.
 func OpenPostgres(ctx context.Context, dsn string) (Store, error) {
 	if err := migrate(ctx, dsn); err != nil {
 		return nil, err

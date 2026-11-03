@@ -12,9 +12,12 @@ import (
 )
 
 var (
+	// ErrNotFound means the id never existed or the token does not open it.
 	ErrNotFound = errors.New("stream not found")
+	// ErrTooLarge means a transient event does not fit one wake-up payload.
 	ErrTooLarge = errors.New("transient event too large")
-	ErrGone     = errors.New("stream deleted")
+	// ErrGone means the stream was deleted; its id is a tombstone.
+	ErrGone = errors.New("stream deleted")
 )
 
 // Event is one pushed event. Event defaults to "message" before it reaches a Store.
@@ -54,7 +57,9 @@ type Notice struct {
 type Store interface {
 	// Create mints a stream and the token that opens its reads.
 	Create(ctx context.Context) (id, token string, err error)
+	// Append stores events and returns their seqs.
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
+	// Delete tombstones a stream and removes its events.
 	Delete(ctx context.Context, stream string) error
 	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
@@ -64,11 +69,14 @@ type Store interface {
 	Rotate(ctx context.Context, stream string) (string, error)
 	// Revoke clears the token until the next Rotate.
 	Revoke(ctx context.Context, stream string) error
+	// Stat returns the operational view of one stream, tombstones included.
 	Stat(ctx context.Context, stream string) (Stat, error)
+	// Live subscribes to local wake-ups for a stream. The returned func unsubscribes.
 	Live(stream string) (<-chan Notice, func())
 	// Ready reports whether this node can serve: the database answers and,
 	// in postgres mode, notifications are flowing.
 	Ready(ctx context.Context) error
+	// Close releases the store's resources.
 	Close() error
 }
 

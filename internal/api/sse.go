@@ -50,16 +50,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	last, err := s.store.OpenReader(r.Context(), id, token)
-	if errors.Is(err, store.ErrNotFound) {
-		s.fail(w, http.StatusNotFound, "stream not found")
-		return
-	}
-	if errors.Is(err, store.ErrGone) {
-		s.fail(w, http.StatusGone, "stream deleted")
+	if s.failStream(w, err) {
 		return
 	}
 	if err != nil {
-		s.log.Error("last seq", "err", err)
+		s.log.Error("open reader", "err", err)
 		s.fail(w, http.StatusInternalServerError, "store error")
 		return
 	}

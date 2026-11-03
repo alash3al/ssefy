@@ -138,6 +138,20 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("transient event was stored: %d -> %d", len(before), len(after))
 	}
 
+	// rotate must also end the local reader, not just invalidate the token.
+	waitClosed := func() {
+		for {
+			select {
+			case _, ok := <-live:
+				if !ok {
+					return
+				}
+			case <-time.After(time.Second):
+				t.Fatal("rotate did not close the local reader")
+			}
+		}
+	}
+
 	// Token lifecycle: a wrong token is invisible, rotate invalidates, revoke
 	// stops reads until the next rotate.
 	if _, err := s.OpenReader(ctx, id, "wrong"); !errors.Is(err, ErrNotFound) {
@@ -147,6 +161,7 @@ func testLifecycle(t *testing.T, s Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	waitClosed()
 	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("old token after rotate = %v", err)
 	}

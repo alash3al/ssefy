@@ -28,6 +28,7 @@ type memEvent struct {
 	CollapseKey string
 }
 
+// NewMemory returns the development store: one process, no PostgreSQL.
 func NewMemory() Store {
 	return &memory{hub: newHub(), streams: make(map[string]*memStream)}
 }

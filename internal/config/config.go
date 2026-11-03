@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Config is the typed environment of one process.
 type Config struct {
 	Listen string   `env:"SSEFY_LISTEN" envDefault:":8080"`
 	Store  string   `env:"SSEFY_STORE" envDefault:"memory://"`
