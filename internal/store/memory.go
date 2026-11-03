@@ -106,7 +106,7 @@ func (m *memory) Delete(_ context.Context, id string) error {
 	delete(m.streams, id)
 	m.mu.Unlock()
 	if ok {
-		m.hub.notify(id, Notice{Closed: true})
+		m.hub.close(id)
 	}
 	return nil
 }

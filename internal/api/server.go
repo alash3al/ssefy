@@ -14,7 +14,7 @@ import (
 	"github.com/alash3al/ssefy/internal/store"
 )
 
-type API struct {
+type Server struct {
 	store   store.Store
 	secret  string
 	origins []string
@@ -24,8 +24,8 @@ type API struct {
 	once sync.Once
 }
 
-func New(st store.Store, secret string, origins []string, log *slog.Logger) *API {
-	return &API{
+func New(st store.Store, secret string, origins []string, log *slog.Logger) *Server {
+	return &Server{
 		store:   st,
 		secret:  secret,
 		origins: origins,
@@ -35,51 +35,51 @@ func New(st store.Store, secret string, origins []string, log *slog.Logger) *API
 }
 
 // Close ends every open stream so http.Server.Shutdown can return.
-func (a *API) Close() {
-	a.once.Do(func() { close(a.done) })
+func (s *Server) Close() {
+	s.once.Do(func() { close(s.done) })
 }
 
-func (a *API) Handler() http.Handler {
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/streams", a.auth(a.create))
-	mux.HandleFunc("POST /v1/streams/{id}", a.auth(a.append))
-	mux.HandleFunc("DELETE /v1/streams/{id}", a.auth(a.remove))
-	mux.HandleFunc("GET /v1/streams/{id}", a.stream)
-	mux.HandleFunc("GET /healthz", a.health)
-	return a.cors(mux)
+	mux.HandleFunc("POST /v1/streams", s.auth(s.create))
+	mux.HandleFunc("POST /v1/streams/{id}", s.auth(s.append))
+	mux.HandleFunc("DELETE /v1/streams/{id}", s.auth(s.remove))
+	mux.HandleFunc("GET /v1/streams/{id}", s.stream)
+	mux.HandleFunc("GET /healthz", s.health)
+	return s.cors(mux)
 }
 
-func (a *API) health(w http.ResponseWriter, r *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	if err := a.store.Ping(ctx); err != nil {
-		a.fail(w, http.StatusServiceUnavailable, "store unavailable")
+	if err := s.store.Ping(ctx); err != nil {
+		s.fail(w, http.StatusServiceUnavailable, "store unavailable")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
 // auth protects writes. Reads stay open; the stream id is the capability.
-func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(a.secret)) != 1 {
-			a.fail(w, http.StatusUnauthorized, "unauthorized")
+		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(s.secret)) != 1 {
+			s.fail(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next(w, r)
 	}
 }
 
-func (a *API) cors(next http.Handler) http.Handler {
+func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Vary", "Origin")
 		origin := r.Header.Get("Origin")
-		if origin == "" || !a.originAllowed(origin) {
+		if origin == "" || !s.originAllowed(origin) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Add("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Last-Event-ID")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
@@ -90,8 +90,8 @@ func (a *API) cors(next http.Handler) http.Handler {
 	})
 }
 
-func (a *API) originAllowed(origin string) bool {
-	for _, o := range a.origins {
+func (s *Server) originAllowed(origin string) bool {
+	for _, o := range s.origins {
 		if o == "*" || o == origin {
 			return true
 		}
@@ -99,7 +99,7 @@ func (a *API) originAllowed(origin string) bool {
 	return false
 }
 
-func (a *API) fail(w http.ResponseWriter, status int, msg string) {
+func (s *Server) fail(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 

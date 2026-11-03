@@ -45,3 +45,28 @@ func (h *hub) notify(stream string, n Notice) {
 		}
 	}
 }
+
+// close ends every reader of a deleted stream immediately.
+func (h *hub) close(stream string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.m[stream] {
+		close(ch)
+	}
+	delete(h.m, stream)
+}
+
+// broadcast wakes every local reader. Used after the notification listener
+// reconnects, when commits made during the outage have no notice.
+func (h *hub) broadcast() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, chans := range h.m {
+		for ch := range chans {
+			select {
+			case ch <- Notice{}:
+			default:
+			}
+		}
+	}
+}

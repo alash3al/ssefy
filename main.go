@@ -22,11 +22,10 @@ func main() {
 	secret := flag.String("secret", env("SSEFY_SERVER_SECRET", ""), "server secret for writes")
 	cors := flag.String("cors", env("SSEFY_CORS_ORIGINS", ""), "allowed CORS origins, comma separated")
 	dev := flag.Bool("dev", false, "development mode")
-	cert := flag.String("tls-cert", env("SSEFY_TLS_CERT", ""), "TLS certificate file")
-	key := flag.String("tls-key", env("SSEFY_TLS_KEY", ""), "TLS key file")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(log) // the store logs through slog.Default
 
 	if *secret == "" {
 		if !*dev {
@@ -36,11 +35,6 @@ func main() {
 		*secret = "dev"
 		log.Warn("using the insecure development secret")
 	}
-	if (*cert == "") != (*key == "") {
-		log.Error("--tls-cert and --tls-key must be set together")
-		os.Exit(1)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -55,7 +49,7 @@ func main() {
 	srv := &http.Server{
 		Addr:              *listen,
 		Handler:           a.Handler(),
-		Protocols:         protocols(*cert != ""),
+		Protocols:         protocols(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -63,11 +57,7 @@ func main() {
 
 	errs := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", *listen, "store", *dsn)
-		if *cert != "" {
-			errs <- srv.ListenAndServeTLS(*cert, *key)
-			return
-		}
+		log.Info("listening", "addr", *listen, "store", storeKind(*dsn))
 		errs <- srv.ListenAndServe()
 	}()
 
@@ -86,14 +76,20 @@ func main() {
 	}
 }
 
-func protocols(tls bool) *http.Protocols {
+// protocols serves HTTP/1.1 and cleartext HTTP/2 on the same port. TLS ends
+// at the proxy; browsers need HTTP/2 to avoid six connections per origin.
+func protocols() *http.Protocols {
 	p := new(http.Protocols)
 	p.SetHTTP1(true)
-	p.SetHTTP2(true)
-	if !tls {
-		p.SetUnencryptedHTTP2(true) // h2c for a plain listener behind the load balancer
-	}
+	p.SetUnencryptedHTTP2(true)
 	return p
+}
+
+func storeKind(dsn string) string {
+	if strings.HasPrefix(dsn, "memory://") {
+		return "memory"
+	}
+	return "postgres"
 }
 
 func openStore(ctx context.Context, dsn string) (store.Store, error) {

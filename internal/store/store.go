@@ -31,15 +31,17 @@ type Row struct {
 	Data  string
 }
 
-// Notice wakes readers of one stream. A plain Notice means "read what is
-// stored"; the others carry state that is not in the database.
+// Notice wakes readers of one stream. A zero Notice means "read what is
+// stored"; a transient one also carries an event that was never stored.
+// Deleting a stream closes its subscribers' channels instead.
 type Notice struct {
-	Closed    bool
 	Transient bool
 	Event     string
 	Data      string
 }
 
+// Store persists streams and wakes local readers. Append requires validated,
+// non-empty events; seqs are per stream, assigned in commit order, never reused.
 type Store interface {
 	Create(ctx context.Context) (string, error)
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)

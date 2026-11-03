@@ -1,16 +1,13 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"embed"
-	"encoding/json"
 	"errors"
-	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -18,11 +15,6 @@ import (
 
 //go:embed migrations/*.sql
 var migrations embed.FS
-
-const (
-	notifyChannel = "ssefy"
-	maxNotify     = 7800 // NOTIFY payloads must stay under 8000 bytes
-)
 
 // postgres is the real store. Writes bump one stream row under FOR UPDATE, so
 // seqs commit in order and no reader can ever skip one.
@@ -259,66 +251,6 @@ func (p *postgres) Close() error {
 	return nil
 }
 
-// listen holds one dedicated connection so every node sees every commit, and
-// remembers nothing else: the payload is only a hint to read the database.
-func (p *postgres) listen() {
-	for p.ctx.Err() == nil {
-		if err := p.listenOnce(); err != nil && p.ctx.Err() == nil {
-			slog.Warn("notification listener reconnecting", "err", err)
-			sleepCtx(p.ctx, time.Second)
-		}
-	}
-}
-
-func (p *postgres) listenOnce() error {
-	pc, err := p.pool.Acquire(p.ctx)
-	if err != nil {
-		return err
-	}
-	conn := pc.Hijack()
-	defer func() { _ = conn.Close(context.Background()) }()
-
-	if _, err := conn.Exec(p.ctx, "LISTEN "+notifyChannel); err != nil {
-		return err
-	}
-	for {
-		n, err := conn.WaitForNotification(p.ctx)
-		if err != nil {
-			return err
-		}
-		var msg notice
-		if err := json.Unmarshal([]byte(n.Payload), &msg); err != nil || msg.ID == "" {
-			continue
-		}
-		switch {
-		case msg.Deleted:
-			p.hub.notify(msg.ID, Notice{Closed: true})
-		case msg.Transient:
-			p.hub.notify(msg.ID, Notice{Transient: true, Event: msg.Event, Data: msg.Data})
-		default:
-			p.hub.notify(msg.ID, Notice{})
-		}
-	}
-}
-
-type notice struct {
-	ID        string `json:"i"`
-	Deleted   bool   `json:"d,omitempty"`
-	Transient bool   `json:"t,omitempty"`
-	Event     string `json:"e,omitempty"`
-	Data      string `json:"x,omitempty"`
-}
-
-func encodeNotice(n notice) (string, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false) // keep payloads small; this is not HTML
-	if err := enc.Encode(n); err != nil {
-		return "", err
-	}
-	return string(bytes.TrimRight(buf.Bytes(), "\n")), nil
-}
-
 func idemSeqs(ctx context.Context, tx pgx.Tx, id, key string) ([]int64, string, error) {
 	rows, err := tx.Query(ctx,
 		"SELECT seq, idempotency_hash FROM ssefy_events WHERE stream_id = $1 AND idempotency_key = $2 ORDER BY seq",
@@ -364,15 +296,6 @@ func nullString(s string) any {
 }
 
 func isUnique(err error) bool {
-	var pgErr interface{ SQLState() string }
-	return errors.As(err, &pgErr) && pgErr.SQLState() == "23505"
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
-	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

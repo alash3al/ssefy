@@ -18,7 +18,6 @@ import (
 type rig struct {
 	t   *testing.T
 	srv *httptest.Server
-	api *API
 }
 
 func newRig(t *testing.T) *rig {
@@ -31,7 +30,7 @@ func newRig(t *testing.T) *rig {
 		srv.Close()
 		_ = st.Close()
 	})
-	return &rig{t: t, srv: srv, api: a}
+	return &rig{t: t, srv: srv}
 }
 
 func closeBody(resp *http.Response) { _ = resp.Body.Close() }
@@ -272,6 +271,26 @@ func TestIdempotencyHTTP(t *testing.T) {
 	}
 }
 
+func TestNotFoundAndNow(t *testing.T) {
+	r := newRig(t)
+	if resp := r.write("POST", "/v1/streams/missing", `{"data":"x"}`); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("append to missing = %d", resp.StatusCode)
+	}
+
+	id := r.create()
+	r.append(id, `{"data":"old"}`)
+
+	// ?after=now skips what is already stored, then follows live events.
+	resp, br, cancel := openStream(t, r.srv.URL+"/v1/streams/"+id+"?after=now", nil)
+	defer cancel()
+	defer closeBody(resp)
+
+	r.append(id, `{"data":"new"}`)
+	if f := readFrame(t, br); f.id != "2" || f.data != "new" {
+		t.Fatalf("now frame = %+v", f)
+	}
+}
+
 func TestFormatEventSplitsLines(t *testing.T) {
 	got := formatEvent(7, "message", "a\r\nb\rc")
 	want := "id: 7\nevent: message\ndata: a\ndata: b\ndata: c\n\n"
@@ -280,5 +299,13 @@ func TestFormatEventSplitsLines(t *testing.T) {
 	}
 	if got := formatEvent(0, "typing", ""); strings.Contains(got, "id:") {
 		t.Fatalf("transient frame has an id: %q", got)
+	}
+}
+
+func BenchmarkFormatEvent(b *testing.B) {
+	data := strings.Repeat("some realtime payload line\n", 64)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = formatEvent(42, "message", data)
 	}
 }

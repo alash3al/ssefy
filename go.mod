@@ -1,6 +1,6 @@
 module github.com/alash3al/ssefy
 
-go 1.26.3
+go 1.26.0
 
 require (
 	github.com/jackc/pgx/v5 v5.12.0

@@ -5,12 +5,22 @@ One Go binary plus PostgreSQL. Backends append events to streams by ID; browsers
 ## Run
 
 ```sh
-SSEFY_SERVER_SECRET=change-me \
-SSEFY_STORE='postgres://user:pass@host/db' \
-./ssefy
+docker build -t ssefy .
+docker run --rm -p 8080:8080 \
+  -e SSEFY_SERVER_SECRET=change-me \
+  -e SSEFY_STORE='postgres://user:pass@host/db' \
+  ssefy
+```
+
+Or from source:
+
+```sh
+SSEFY_SERVER_SECRET=change-me SSEFY_STORE='postgres://user:pass@host/db' ./ssefy
 ```
 
 `SSEFY_STORE=memory://` (the default) runs without PostgreSQL, for development only. Migrations run at startup.
+
+TLS is not handled here: terminate it at the proxy and point it at this port.
 
 ## API
 
@@ -36,6 +46,8 @@ Stream IDs are 128 random bits. They are the only thing protecting reads, so tre
 - `collapse_key` replaces the stored event with the same key. Live readers still see every push.
 - `Idempotency-Key` makes a retried push return the original seqs and deliver once. The same key with a different body is `422`.
 
+Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255-byte keys.
+
 ## Resuming
 
 - No cursor: start at now.
@@ -52,11 +64,10 @@ Stream IDs are 128 random bits. They are the only thing protecting reads, so tre
 | `SSEFY_STORE` | `memory://` |
 | `SSEFY_SERVER_SECRET` | required unless `--dev` |
 | `SSEFY_CORS_ORIGINS` | `*` with `--dev` |
-| `SSEFY_TLS_CERT` / `SSEFY_TLS_KEY` | off |
 
-Each flag has the same name in lowercase (`--listen`, `--store`, `--secret`, `--cors`, `--dev`, `--tls-cert`, `--tls-key`).
+Flags: `--listen`, `--store`, `--secret`, `--cors`, `--dev`.
 
-Serve over HTTP/2 (TLS, or h2c on a plain listener) so browsers do not hit their six-connections-per-origin limit on HTTP/1.1.
+The server speaks HTTP/1.1 and cleartext HTTP/2 on the same port, so browsers do not hit their six-connections-per-origin limit on HTTP/1.1.
 
 ## Tests
 
