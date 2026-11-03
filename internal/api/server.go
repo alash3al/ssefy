@@ -59,15 +59,10 @@ func (s *Server) Handler() http.Handler {
 	return instrument(s.cors(mux))
 }
 
-// failStream answers the lookup failures every stream endpoint shares: 404 for
-// an unknown id, 410 for a tombstone.
+// failStream answers the lookup failure every stream endpoint shares.
 func (s *Server) failStream(w http.ResponseWriter, err error) bool {
-	switch {
-	case errors.Is(err, store.ErrNotFound):
+	if errors.Is(err, store.ErrNotFound) {
 		s.fail(w, http.StatusNotFound, "stream not found")
-		return true
-	case errors.Is(err, store.ErrGone):
-		s.fail(w, http.StatusGone, "stream deleted")
 		return true
 	}
 	return false

@@ -102,8 +102,8 @@ func encodeTransients(id string, events []Event) ([]string, error) {
 }
 
 // notifyClose tells every node to end its readers of this stream. The reason
-// is not in the payload: the reconnect gets 404 after rotate/revoke and 410
-// after delete.
+// is not in the payload: a reconnect always gets 404, either because the
+// stream is gone or because the token no longer opens it.
 func notifyClose(ctx context.Context, tx pgx.Tx, id string) error {
 	payload, err := encodeNotice(notice{ID: id, Close: true})
 	if err != nil {

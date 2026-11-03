@@ -119,16 +119,12 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var last int64
-	var deletedAt *time.Time
-	err = tx.QueryRow(ctx, "SELECT last_seq, deleted_at FROM ssefy_streams WHERE id = $1 FOR UPDATE", id).Scan(&last, &deletedAt)
+	err = tx.QueryRow(ctx, "SELECT last_seq FROM ssefy_streams WHERE id = $1 FOR UPDATE", id).Scan(&last)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
-	}
-	if deletedAt != nil {
-		return nil, ErrGone
 	}
 
 	if idemKey != "" {
@@ -203,16 +199,13 @@ func (p *postgres) appendTransient(ctx context.Context, id string, events []Even
 		return err
 	}
 
-	var deletedAt *time.Time
-	err = p.pool.QueryRow(ctx, "SELECT deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&deletedAt)
+	var one int
+	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
-	}
-	if deletedAt != nil {
-		return ErrGone
 	}
 
 	for _, payload := range payloads {
@@ -223,25 +216,19 @@ func (p *postgres) appendTransient(ctx context.Context, id string, events []Even
 	return nil
 }
 
-// Delete soft-deletes the stream so later reads can answer 410, and removes
-// the events and the append/create records that would otherwise outlive it.
+// Delete removes the stream; its events and append records cascade.
 func (p *postgres) Delete(ctx context.Context, id string) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL", id)
+	tag, err := tx.Exec(ctx, "DELETE FROM ssefy_streams WHERE id = $1", id)
 	if err != nil {
 		return err
 	}
-	for _, table := range []string{"ssefy_events", "ssefy_appends"} {
-		if _, err := tx.Exec(ctx, "DELETE FROM "+table+" WHERE stream_id = $1", id); err != nil {
-			return err
-		}
-	}
 	if tag.RowsAffected() == 0 {
-		return tx.Commit(ctx) // already gone or never existed: no notice
+		return tx.Commit(ctx) // unknown id: no notice
 	}
 	if err := notifyClose(ctx, tx, id); err != nil {
 		return err
@@ -265,7 +252,7 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	}
 
 	var one int
-	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1 AND deleted_at IS NULL", id).Scan(&one)
+	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -274,11 +261,10 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 
 func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, error) {
 	var n int64
-	var deletedAt *time.Time
 	var stored *string
 	err := p.pool.QueryRow(ctx,
-		"SELECT last_seq, deleted_at, token FROM ssefy_streams WHERE id = $1",
-		id).Scan(&n, &deletedAt, &stored)
+		"SELECT last_seq, token FROM ssefy_streams WHERE id = $1",
+		id).Scan(&n, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound
 	}
@@ -287,9 +273,6 @@ func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, err
 	}
 	if token == "" || stored == nil || !sameToken(*stored, token) {
 		return 0, ErrUnauthorized
-	}
-	if deletedAt != nil {
-		return 0, ErrGone
 	}
 	return n, nil
 }
@@ -305,12 +288,12 @@ func (p *postgres) Rotate(ctx context.Context, id string) (string, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = $2 WHERE id = $1 AND deleted_at IS NULL", id, token)
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = $2 WHERE id = $1", id, token)
 	if err != nil {
 		return "", err
 	}
 	if tag.RowsAffected() == 0 {
-		return "", streamErr(ctx, tx, id)
+		return "", ErrNotFound
 	}
 	if err := notifyClose(ctx, tx, id); err != nil {
 		return "", err
@@ -328,12 +311,12 @@ func (p *postgres) Revoke(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = NULL WHERE id = $1 AND deleted_at IS NULL", id)
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = NULL WHERE id = $1", id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return streamErr(ctx, tx, id)
+		return ErrNotFound
 	}
 	if err := notifyClose(ctx, tx, id); err != nil {
 		return err
@@ -345,32 +328,16 @@ func (p *postgres) Stat(ctx context.Context, id string) (Stat, error) {
 	var st Stat
 	var hasToken bool
 	err := p.pool.QueryRow(ctx,
-		"SELECT last_seq, created_at, deleted_at, token IS NOT NULL FROM ssefy_streams WHERE id = $1",
-		id).Scan(&st.LastSeq, &st.CreatedAt, &st.DeletedAt, &hasToken)
+		"SELECT last_seq, created_at, token IS NOT NULL FROM ssefy_streams WHERE id = $1",
+		id).Scan(&st.LastSeq, &st.CreatedAt, &hasToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Stat{}, ErrNotFound
 	}
 	if err != nil {
 		return Stat{}, err
 	}
-	st.Readable = hasToken && st.DeletedAt == nil
+	st.Readable = hasToken
 	return st, nil
-}
-
-// streamErr explains an UPDATE that matched no live row.
-func streamErr(ctx context.Context, tx pgx.Tx, id string) error {
-	var deletedAt *time.Time
-	err := tx.QueryRow(ctx, "SELECT deleted_at FROM ssefy_streams WHERE id = $1", id).Scan(&deletedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	if deletedAt != nil {
-		return ErrGone
-	}
-	return ErrNotFound
 }
 
 func (p *postgres) Live(stream string) (<-chan Notice, func()) {

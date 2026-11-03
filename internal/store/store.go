@@ -17,8 +17,6 @@ var (
 	ErrNotFound = errors.New("stream not found")
 	// ErrTooLarge means a transient event does not fit one wake-up payload.
 	ErrTooLarge = errors.New("transient event too large")
-	// ErrGone means the stream was deleted; its id is a tombstone.
-	ErrGone = errors.New("stream deleted")
 	// ErrUnauthorized means the stream exists but the token does not open it.
 	ErrUnauthorized = errors.New("invalid token")
 )
@@ -43,7 +41,6 @@ type Row struct {
 type Stat struct {
 	LastSeq   int64
 	CreatedAt time.Time
-	DeletedAt *time.Time
 	Readable  bool
 }
 
@@ -62,7 +59,7 @@ type Store interface {
 	Create(ctx context.Context) (id, token string, err error)
 	// Append stores events and returns their seqs.
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
-	// Delete tombstones a stream and removes its events.
+	// Delete removes a stream and its events.
 	Delete(ctx context.Context, stream string) error
 	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
@@ -72,7 +69,7 @@ type Store interface {
 	Rotate(ctx context.Context, stream string) (string, error)
 	// Revoke clears the token until the next Rotate.
 	Revoke(ctx context.Context, stream string) error
-	// Stat returns the operational view of one stream, tombstones included.
+	// Stat returns the operational view of one stream.
 	Stat(ctx context.Context, stream string) (Stat, error)
 	// Live subscribes to local wake-ups for a stream. The returned func unsubscribes.
 	Live(stream string) (<-chan Notice, func())

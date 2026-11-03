@@ -18,7 +18,6 @@ type memStream struct {
 	token     string
 	lastSeq   int64
 	createdAt time.Time
-	deletedAt *time.Time
 	events    []memEvent
 	idem      map[string][]int64
 }
@@ -58,10 +57,6 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 	if !ok {
 		m.mu.Unlock()
 		return nil, ErrNotFound
-	}
-	if s.deletedAt != nil {
-		m.mu.Unlock()
-		return nil, ErrGone
 	}
 	if events[0].Transient {
 		m.mu.Unlock()
@@ -111,17 +106,12 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 
 func (m *memory) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
-	s, ok := m.streams[id]
-	if !ok || s.deletedAt != nil {
-		m.mu.Unlock()
-		return nil
-	}
-	now := time.Now()
-	s.deletedAt = &now
-	s.events = nil
-	s.idem = map[string][]int64{}
+	_, ok := m.streams[id]
+	delete(m.streams, id)
 	m.mu.Unlock()
-	m.hub.close(id)
+	if ok {
+		m.hub.close(id)
+	}
 	return nil
 }
 
@@ -129,7 +119,7 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.streams[id]
-	if !ok || s.deletedAt != nil {
+	if !ok {
 		return nil, ErrNotFound
 	}
 	first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > after })
@@ -153,9 +143,6 @@ func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) 
 	if token == "" || !sameToken(s.token, token) {
 		return 0, ErrUnauthorized
 	}
-	if s.deletedAt != nil {
-		return 0, ErrGone
-	}
 	return s.lastSeq, nil
 }
 
@@ -170,10 +157,6 @@ func (m *memory) Rotate(_ context.Context, id string) (string, error) {
 		m.mu.Unlock()
 		return "", ErrNotFound
 	}
-	if s.deletedAt != nil {
-		m.mu.Unlock()
-		return "", ErrGone
-	}
 	s.token = token
 	m.mu.Unlock()
 	m.hub.close(id)
@@ -186,10 +169,6 @@ func (m *memory) Revoke(_ context.Context, id string) error {
 	if !ok {
 		m.mu.Unlock()
 		return ErrNotFound
-	}
-	if s.deletedAt != nil {
-		m.mu.Unlock()
-		return ErrGone
 	}
 	s.token = ""
 	m.mu.Unlock()
@@ -207,8 +186,7 @@ func (m *memory) Stat(_ context.Context, id string) (Stat, error) {
 	return Stat{
 		LastSeq:   s.lastSeq,
 		CreatedAt: s.createdAt,
-		DeletedAt: s.deletedAt,
-		Readable:  s.token != "" && s.deletedAt == nil,
+		Readable:  s.token != "",
 	}, nil
 }
 

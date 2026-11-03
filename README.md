@@ -28,8 +28,8 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | Call | Auth | Does |
 | --- | --- | --- |
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
-| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown, `410` deleted |
-| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown id, `410` deleted |
+| `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown or deleted |
+| `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown or deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
 | `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","deleted_at","readable"}`, `404` unknown |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |
@@ -39,9 +39,9 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 
 An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token. EventSource cannot set headers, so browsers pass it as `?token=`; any other client may send `Authorization: Bearer <token>` instead. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
 
-Rotate and revoke drop every reader, exactly like delete. EventSource cannot change its URL, so the host has to reopen it with the new token; the reconnect gets `404` after rotate/revoke and `410` after delete.
+Rotate, revoke and delete drop every reader. EventSource cannot change its URL, so after a rotate the host has to reopen it with the new token. Every reconnect without a working token gets `404`.
 
-Deletion removes the events and append records; the id stays as a tombstone, so a read with the old token answers `410 Gone`. An id that never existed is `404`; a wrong token is `401`.
+Deletion removes the stream, its events and append records; later reads are `404`. A wrong token is `401`.
 
 ## Events
 
@@ -64,7 +64,7 @@ Limits: 1 MiB request body, 500 events per push, 64 KiB of `data` per event, 255
 - `?after=0`: replay everything.
 - `?after=now`: skip history.
 - `Last-Event-ID` wins over `?after`.
-- Deleted stream: open connections close, the next connect gets `410`; an unknown id gets `404`; a missing or wrong token gets `401`. EventSource stops reconnecting on any non-200.
+- Deleted stream: open connections close, the next connect gets `404`; an unknown id gets `404`; a missing or wrong token gets `401`. EventSource stops reconnecting on any non-200.
 
 ## Configuration
 

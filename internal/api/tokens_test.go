@@ -35,7 +35,7 @@ func TestReaderTokens(t *testing.T) {
 		t.Fatalf("frame = %+v", f)
 	}
 
-	if st := r.stat(id); st.LastSeq != 1 || !st.Readable || st.DeletedAt != nil {
+	if st := r.stat(id); st.LastSeq != 1 || !st.Readable {
 		t.Fatalf("stat = %+v", st)
 	}
 
@@ -68,14 +68,14 @@ func TestReaderTokens(t *testing.T) {
 		t.Fatalf("readable after rotate = %+v", st)
 	}
 
-	// Delete wins over the token: 410, not 404.
+	// Delete removes the stream: 404, even with the token that used to work.
 	del := r.write("DELETE", "/v1/streams/"+id, "")
 	_ = del.Body.Close()
-	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusGone {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+rotated, "", nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
-	if st := r.stat(id); st.DeletedAt == nil || st.Readable {
-		t.Fatalf("stat after delete = %+v", st)
+	if resp := r.do("GET", "/v1/streams/"+id+"/stat", "", map[string]string{"Authorization": "Bearer secret"}); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("stat after delete = %d", resp.StatusCode)
 	}
 }
 

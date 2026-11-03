@@ -191,16 +191,16 @@ func testLifecycle(t *testing.T, s Store) {
 	if _, err := s.Read(ctx, id, 0, 10); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("read after delete = %v", err)
 	}
-	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrGone) {
+	if _, err := s.OpenReader(ctx, id, token); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("open after delete = %v", err)
 	}
-	if st, err := s.Stat(ctx, id); err != nil || st.DeletedAt == nil || st.Readable {
-		t.Fatalf("stat after delete = %+v, %v", st, err)
+	if _, err := s.Stat(ctx, id); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stat after delete = %v", err)
 	}
-	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrGone) {
+	if _, err := s.Append(ctx, id, events, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("append after delete = %v", err)
 	}
-	if _, err := s.Append(ctx, id, []Event{{Event: "typing", Data: "x", Transient: true}}, ""); !errors.Is(err, ErrGone) {
+	if _, err := s.Append(ctx, id, []Event{{Event: "typing", Data: "x", Transient: true}}, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("transient after delete = %v", err)
 	}
 }

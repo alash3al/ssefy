@@ -199,10 +199,10 @@ func TestReplayLiveAndDelete(t *testing.T) {
 	if _, err := br.ReadString('\n'); err == nil {
 		t.Fatal("stream stayed open after delete")
 	}
-	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusGone {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
-	if resp := r.write("POST", "/v1/streams/"+id, `{"data":"late"}`); resp.StatusCode != http.StatusGone {
+	if resp := r.write("POST", "/v1/streams/"+id, `{"data":"late"}`); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("append after delete = %d", resp.StatusCode)
 	}
 }
@@ -392,7 +392,7 @@ func TestPostgresEndToEnd(t *testing.T) {
 
 	del := r.write("DELETE", "/v1/streams/"+id, "")
 	_ = del.Body.Close()
-	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusGone {
+	if resp := r.do("GET", "/v1/streams/"+id+"?token="+token, "", nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get after delete = %d", resp.StatusCode)
 	}
 }

@@ -6,10 +6,9 @@ import (
 )
 
 type statResponse struct {
-	LastSeq   int64      `json:"last_seq"`
-	CreatedAt time.Time  `json:"created_at"`
-	DeletedAt *time.Time `json:"deleted_at"`
-	Readable  bool       `json:"readable"`
+	LastSeq   int64     `json:"last_seq"`
+	CreatedAt time.Time `json:"created_at"`
+	Readable  bool      `json:"readable"`
 }
 
 func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +24,6 @@ func (s *Server) stat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, statResponse{
 		LastSeq:   st.LastSeq,
 		CreatedAt: st.CreatedAt,
-		DeletedAt: st.DeletedAt,
 		Readable:  st.Readable,
 	})
 }
