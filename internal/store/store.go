@@ -59,7 +59,7 @@ type Store interface {
 	Create(ctx context.Context) (id, token string, err error)
 	// Append stores events and returns their seqs.
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
-	// Delete tombstones a stream and removes its events.
+	// Delete removes a stream and its events.
 	Delete(ctx context.Context, stream string) error
 	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)

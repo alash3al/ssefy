@@ -41,7 +41,7 @@ An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128
 
 Rotate, revoke and delete drop every reader. EventSource cannot change its URL, so after a rotate the host has to reopen it with the new token. Every reconnect without a working token gets `404`.
 
-Deletion removes the events and append records and leaves the id as a tombstone, so it is never reused; every later request is `404`. A wrong token is `401`.
+Deletion removes the stream, its events and append records; later requests are `404`. A wrong token is `401`.
 
 ## Events
 
