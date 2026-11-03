@@ -264,7 +264,7 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 		limit = 500
 	}
 	rows, err := p.pool.Query(ctx,
-		"SELECT seq, event, data FROM ssefy_events WHERE stream_id = $1 AND seq > $2 ORDER BY seq LIMIT $3",
+		"SELECT seq, event, data, created_at FROM ssefy_events WHERE stream_id = $1 AND seq > $2 ORDER BY seq LIMIT $3",
 		id, after, limit)
 	if err != nil {
 		return nil, err
@@ -274,7 +274,7 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	var out []Row
 	for rows.Next() {
 		var r Row
-		if err := rows.Scan(&r.Seq, &r.Event, &r.Data); err != nil {
+		if err := rows.Scan(&r.Seq, &r.Event, &r.Data, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

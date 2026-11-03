@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 )
 
 // memory is the development store: no PostgreSQL, one process.
@@ -99,7 +100,7 @@ func (m *memory) Append(_ context.Context, id string, events []Event, idemKey st
 		s.lastSeq++
 		seqs[i] = s.lastSeq
 		s.events = append(s.events, memEvent{
-			Row:         Row{Seq: s.lastSeq, Event: ev.Event, Data: ev.Data},
+			Row:         Row{Seq: s.lastSeq, Event: ev.Event, Data: ev.Data, CreatedAt: time.Now()},
 			CollapseKey: ev.CollapseKey,
 		})
 	}

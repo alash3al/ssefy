@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
+
+	"github.com/alash3al/ssefy/internal/metrics"
 )
 
 const (
@@ -16,8 +18,11 @@ const (
 // listen holds one dedicated connection so every node sees every commit.
 // Notices are hints, never the data: a reader always reads the database.
 func (p *postgres) listen() {
+	defer metrics.ListenerUp.Set(0)
 	for p.ctx.Err() == nil {
 		if err := p.listenOnce(); err != nil && p.ctx.Err() == nil {
+			metrics.ListenerUp.Set(0)
+			metrics.ListenerReconnects.Inc()
 			slog.Warn("notification listener reconnecting", "err", err)
 			sleepCtx(p.ctx, time.Second)
 		}
@@ -35,6 +40,7 @@ func (p *postgres) listenOnce() error {
 	if _, err := conn.Exec(p.ctx, "LISTEN "+notifyChannel); err != nil {
 		return err
 	}
+	metrics.ListenerUp.Set(1)
 	// Anything committed while this node was not listening has no notice;
 	// wake every local reader to re-read its stream.
 	p.hub.broadcast()
@@ -55,10 +61,13 @@ func (p *postgres) dispatch(payload string) {
 	}
 	switch {
 	case msg.Deleted:
+		metrics.Notifications.WithLabelValues("delete").Inc()
 		p.hub.close(msg.ID)
 	case msg.Transient:
+		metrics.Notifications.WithLabelValues("transient").Inc()
 		p.hub.notify(msg.ID, Notice{Transient: true, Event: msg.Event, Data: msg.Data})
 	default:
+		metrics.Notifications.WithLabelValues("append").Inc()
 		p.hub.notify(msg.ID, Notice{})
 	}
 }

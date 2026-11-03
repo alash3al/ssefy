@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 var (
@@ -26,9 +27,10 @@ type Event struct {
 
 // Row is a stored event.
 type Row struct {
-	Seq   int64
-	Event string
-	Data  string
+	Seq       int64
+	Event     string
+	Data      string
+	CreatedAt time.Time
 }
 
 // Notice wakes readers of one stream. A zero Notice means "read what is

@@ -31,6 +31,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` if the stream is gone |
 | `GET /v1/streams/{id}` | Open | SSE: replays, then streams live |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
+| `GET /metrics` | Open | Prometheus text for this node |
 
 Stream IDs are 128 random bits. They are the only thing protecting reads, so treat an ID as a bearer token and keep it out of logs.
 
@@ -68,6 +69,17 @@ Settings come from the environment. `./.env` is loaded first when it exists, the
 | `SSEFY_SERVER_SECRET` | required unless `SSEFY_DEV=true` |
 | `SSEFY_CORS_ORIGINS` | `*` with `SSEFY_DEV=true`, comma separated |
 | `SSEFY_DEV` | `false` |
+
+## Metrics
+
+`GET /metrics` exposes the default Prometheus registry. It is open like reads; gate it at the proxy if the counters are sensitive.
+
+- `ssefy_readers` — open SSE connections on this node.
+- `ssefy_events_appended_total{kind}` and `ssefy_events_delivered_total{kind}` — `stored` or `transient`.
+- `ssefy_event_delivery_lag_seconds` — commit to live delivery, after the initial replay.
+- `ssefy_http_requests_total{method,route,status}` and `ssefy_http_duration_seconds` — an SSE request's duration is the life of the connection.
+- `ssefy_notifications_total{kind}`, `ssefy_listener_up`, `ssefy_listener_reconnects_total`.
+- `ssefy_slow_readers_total`, `ssefy_transient_dropped_total`.
 
 ## Behind a proxy
 

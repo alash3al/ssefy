@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alash3al/ssefy/internal/metrics"
 	"github.com/alash3al/ssefy/internal/store"
 )
 
@@ -46,8 +48,46 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/streams/{id}", s.auth(s.remove))
 	mux.HandleFunc("GET /v1/streams/{id}", s.stream)
 	mux.HandleFunc("GET /healthz", s.health)
-	return s.cors(mux)
+	mux.Handle("GET /metrics", metrics.Handler())
+	return instrument(s.cors(mux))
 }
+
+// instrument records every request, including CORS preflights. For a stream
+// the duration is the life of the connection.
+func instrument(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &recorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		metrics.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
+		metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+	})
+}
+
+// recorder captures the status but leaves Flush and deadlines to the real
+// writer through Unwrap, which http.ResponseController follows.
+type recorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *recorder) WriteHeader(code int) {
+	if r.status == 0 {
+		r.status = code
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

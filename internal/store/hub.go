@@ -1,6 +1,10 @@
 package store
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/alash3al/ssefy/internal/metrics"
+)
 
 // hub fans notices out to the readers attached to this process.
 // Sends never block: a slow reader catches up on its next poll.
@@ -39,26 +43,30 @@ func (h *hub) notify(stream string, n Notice) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.m[stream] {
-		if !push(ch, n) {
-			// A stored wake-up must not be lost. End the slow reader so it
-			// reconnects with Last-Event-ID and catches up from the store.
-			delete(h.m[stream], ch)
-			close(ch)
+		if push(ch, n) {
+			continue
 		}
+		if n.Transient {
+			metrics.TransientDropped.Inc()
+			continue
+		}
+		// A stored wake-up must not be lost. End the slow reader so it
+		// reconnects with Last-Event-ID and catches up from the store.
+		metrics.SlowReaders.Inc()
+		delete(h.m[stream], ch)
+		close(ch)
 	}
 	if len(h.m[stream]) == 0 {
 		delete(h.m, stream)
 	}
 }
 
-// push reports whether the subscriber should stay. Only a transient notice may
-// be dropped: it has no stored copy to fall back to.
 func push(ch chan Notice, n Notice) bool {
 	select {
 	case ch <- n:
 		return true
 	default:
-		return n.Transient
+		return false
 	}
 }
 
@@ -79,10 +87,12 @@ func (h *hub) broadcast() {
 	defer h.mu.Unlock()
 	for stream, chans := range h.m {
 		for ch := range chans {
-			if !push(ch, Notice{}) {
-				delete(chans, ch)
-				close(ch)
+			if push(ch, Notice{}) {
+				continue
 			}
+			metrics.SlowReaders.Inc()
+			delete(chans, ch)
+			close(ch)
 		}
 		if len(chans) == 0 {
 			delete(h.m, stream)

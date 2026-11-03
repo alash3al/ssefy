@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/alash3al/ssefy/internal/metrics"
 	"github.com/alash3al/ssefy/internal/store"
 )
 
@@ -80,6 +81,11 @@ func (s *Server) append(w http.ResponseWriter, r *http.Request) {
 	if seqs == nil {
 		seqs = []int64{}
 	}
+	kind := "stored"
+	if events[0].Transient {
+		kind = "transient"
+	}
+	metrics.Appended.WithLabelValues(kind).Add(float64(len(events)))
 	writeJSON(w, http.StatusOK, map[string][]int64{"seqs": seqs})
 }
 

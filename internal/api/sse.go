@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alash3al/ssefy/internal/metrics"
 	"github.com/alash3al/ssefy/internal/store"
 )
 
@@ -76,6 +77,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if err := rc.Flush(); err != nil {
 		return
 	}
+	metrics.Readers.Inc()
+	defer metrics.Readers.Dec()
 
 	send := func(seq int64, event, data string) error {
 		if err := rc.SetWriteDeadline(time.Now().Add(writeWindow)); err != nil {
@@ -84,10 +87,16 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.WriteString(w, formatEvent(seq, event, data)); err != nil {
 			return err
 		}
+		kind := "stored"
+		if seq == 0 {
+			kind = "transient"
+		}
+		metrics.Delivered.WithLabelValues(kind).Inc()
 		return rc.Flush()
 	}
 
 	sent := after
+	following := false
 	drain := func() error {
 		for {
 			rows, err := s.store.Read(r.Context(), id, sent, pageSize)
@@ -97,6 +106,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			for _, row := range rows {
 				if err := send(row.Seq, row.Event, row.Data); err != nil {
 					return err
+				}
+				if following {
+					metrics.DeliveryLag.Observe(time.Since(row.CreatedAt).Seconds())
 				}
 				sent = row.Seq
 			}
@@ -113,6 +125,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	following = true
 
 	// No polling: the store wakes us on every commit, and broadcasts to all
 	// local readers after a notification outage.

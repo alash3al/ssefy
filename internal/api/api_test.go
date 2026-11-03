@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -330,6 +331,35 @@ func TestMissingStreamAheadCursorAndHead(t *testing.T) {
 
 	if resp := r.do("HEAD", "/v1/streams/"+id, "", nil); resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("HEAD = %d", resp.StatusCode)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	r := newRig(t)
+	id := r.create()
+	r.append(id, `{"data":"x"}`)
+
+	resp, err := http.Get(r.srv.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeBody(resp)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics = %d", resp.StatusCode)
+	}
+	for _, want := range []string{
+		`ssefy_readers`,
+		`ssefy_events_appended_total{kind="stored"}`,
+		`ssefy_http_requests_total`,
+		`go_goroutines`,
+	} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Errorf("metrics output misses %q", want)
+		}
 	}
 }
 
