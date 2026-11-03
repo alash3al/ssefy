@@ -32,7 +32,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `POST /v1/push` | Server secret | Appends the same events to up to 100 streams in one call |
 | `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown or deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Removes the stream and its events. `204`, also for an unknown id |
-| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}`, `404` unknown or deleted |
+| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}` — `readable` is `false` while revoked. `404` unknown or deleted |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |
 | `POST /v1/streams/{id}/revoke` | Server secret | Clears the token, closes readers. `204` |
 | `GET /healthz` | Open | `200` when the store answers and notifications flow; `503` otherwise |
@@ -41,6 +41,8 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token. EventSource cannot set headers, so browsers pass it as `?token=`; any other client may send `Authorization: Bearer <token>` instead. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
 
 `POST /v1/push` takes `{"streams":[…],"events":…}` and returns `{"results":{"<id>":{"seqs":[…]} | {"error":"…"}}}`. Streams are appended independently: one failure does not undo the others, so read the results. A retry with the same `Idempotency-Key` returns the original seqs for the streams that already succeeded and appends to the rest. Duplicate ids in one call are rejected.
+
+Tokens are stored only as a SHA-256 digest; create and rotate return the plaintext exactly once.
 
 Rotate, revoke and delete drop every reader. EventSource cannot change its URL, so after a rotate the host has to reopen it with the new token. Every reconnect without a working token gets `404`.
 
@@ -85,7 +87,7 @@ Settings come from the environment. `./.env` is loaded first when it exists, the
 
 A node keeps answering `200` for 30 seconds after losing its LISTEN connection, so a reconnect blip does not pull it from the load balancer. After that it answers `503`: reads would still replay, but live events would never arrive.
 
-`GET /metrics` exposes the default Prometheus registry. It is open like reads; gate it at the proxy if the counters are sensitive.
+`GET /metrics` exposes the default Prometheus registry. Like `/healthz` it is open — reads themselves need a token — so gate both at the proxy if that matters.
 
 - `ssefy_readers` — open SSE connections on this node.
 - `ssefy_events_appended_total{kind}` and `ssefy_events_delivered_total{kind}` — `stored` or `transient`.
@@ -116,5 +118,5 @@ ssefy sends `X-Accel-Buffering: no` and a `: ping` comment every 15s, so any pro
 
 ```sh
 go test ./...
-SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' go test ./internal/store
+SSEFY_TEST_DB='postgres://postgres:pass@127.0.0.1:5432/ssefy?sslmode=disable' go test ./internal/store ./internal/api
 ```
