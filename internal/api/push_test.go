@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/alash3al/ssefy/internal/store"
 )
 
 func push(t *testing.T, r *rig, body, idemKey string) map[string]pushResult {
@@ -64,6 +67,23 @@ func TestBatchPushIdempotency(t *testing.T) {
 		}
 		if again[id].Error != "" || again[id].Seqs[0] != first[id].Seqs[0] {
 			t.Fatalf("retry[%s] = %+v, want %+v", id, again[id], first[id])
+		}
+	}
+}
+
+func TestAppendErrMsg(t *testing.T) {
+	cases := []struct {
+		err   error
+		msg   string
+		known bool
+	}{
+		{store.ErrNotFound, "stream not found", true},
+		{store.ErrTooLarge, "transient event too large", true},
+		{errors.New("pgx: connection refused"), "append failed", false},
+	}
+	for _, c := range cases {
+		if msg, known := appendErrMsg(c.err); msg != c.msg || known != c.known {
+			t.Errorf("appendErrMsg(%v) = %q, %v; want %q, %v", c.err, msg, known, c.msg, c.known)
 		}
 	}
 }

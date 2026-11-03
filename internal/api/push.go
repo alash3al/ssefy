@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/alash3al/ssefy/internal/metrics"
+	"github.com/alash3al/ssefy/internal/store"
 )
 
 // maxTargets bounds one batch push: one transaction per target.
@@ -68,7 +70,11 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request) {
 	for _, id := range req.Streams {
 		seqs, err := s.store.Append(r.Context(), id, events, idemKey)
 		if err != nil {
-			results[id] = pushResult{Error: err.Error()}
+			msg, known := appendErrMsg(err)
+			if !known {
+				s.log.Warn("push append failed", "stream", id, "err", err)
+			}
+			results[id] = pushResult{Error: msg}
 			continue
 		}
 		metrics.Appended.WithLabelValues(kind).Add(float64(len(events)))
@@ -78,4 +84,17 @@ func (s *Server) push(w http.ResponseWriter, r *http.Request) {
 		results[id] = pushResult{Seqs: seqs}
 	}
 	writeJSON(w, http.StatusOK, map[string]map[string]pushResult{"results": results})
+}
+
+// appendErrMsg is what a batch push may tell the client about one target.
+// Known failures keep their message; anything else stays generic so internal
+// store errors never reach the response body.
+func appendErrMsg(err error) (string, bool) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "stream not found", true
+	case errors.Is(err, store.ErrTooLarge):
+		return "transient event too large", true
+	}
+	return "append failed", false
 }
