@@ -245,6 +245,8 @@ func (p *postgres) appendTransient(ctx context.Context, id string, events []Even
 	return nil
 }
 
+// Delete soft-deletes the stream so later reads can answer 410, and removes
+// the events and the append/create records that would otherwise outlive it.
 func (p *postgres) Delete(ctx context.Context, id string) error {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
