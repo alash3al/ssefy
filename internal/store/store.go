@@ -65,6 +65,11 @@ type Store interface {
 	Delete(ctx context.Context, stream string) error
 	// Read returns stored events after a seq. limit must be positive.
 	Read(ctx context.Context, stream string, after int64, limit int) ([]Row, error)
+	// List returns one page of events, always oldest to newest, and whether
+	// more exist in the walk direction. cursor is exclusive; 0 starts at the
+	// beginning of the walk. limit must be positive. Unlike Read, List does
+	// not check the stream exists: callers authorize first.
+	List(ctx context.Context, stream string, dir Direction, cursor int64, limit int) ([]Row, bool, error)
 	// OpenReader authorizes a token and returns the high-water seq.
 	OpenReader(ctx context.Context, stream, token string) (int64, error)
 	// Rotate mints a new token, invalidating the old one.
@@ -93,6 +98,16 @@ func hashToken(token string) string {
 func sameToken(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
+
+// Direction is which way a listing walks a stream.
+type Direction int
+
+const (
+	// Forward walks toward newer events.
+	Forward Direction = iota
+	// Backward walks toward older events.
+	Backward
+)
 
 // newStreamID returns a time-sortable UUIDv7, the public stream id.
 func newStreamID() (string, error) {

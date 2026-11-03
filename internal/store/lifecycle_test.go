@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +204,60 @@ func testLifecycle(t *testing.T, s Store) {
 	}
 	if _, err := s.Append(ctx, id, []Event{{Event: "typing", Data: "x", Transient: true}}, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("transient after delete = %v", err)
+	}
+}
+
+// testList pins the history contract against every store: pages are oldest to
+// newest in both directions, cursors are exclusive, and the limit+1 probe gets
+// has_more right on the exact-boundary case.
+func testList(t *testing.T, s Store) {
+	t.Helper()
+	ctx := context.Background()
+	id, _, err := s.Create(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	for i := 1; i <= 5; i++ {
+		events = append(events, Event{Event: "message", Data: "m" + strconv.Itoa(i)})
+	}
+	if _, err := s.Append(ctx, id, events, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		dir    Direction
+		cursor int64
+		limit  int
+		want   []int64
+		more   bool
+	}{
+		{"newest page", Backward, 0, 3, []int64{3, 4, 5}, true},
+		{"walk older", Backward, 3, 3, []int64{1, 2}, false},
+		{"exactly limit backward", Backward, 4, 3, []int64{1, 2, 3}, false},
+		{"from first", Forward, 0, 3, []int64{1, 2, 3}, true},
+		{"walk newer", Forward, 3, 2, []int64{4, 5}, false},
+		{"exactly limit forward", Forward, 2, 3, []int64{3, 4, 5}, false},
+		{"empty forward", Forward, 5, 3, []int64{}, false},
+	}
+	for _, c := range cases {
+		rows, more, err := s.List(ctx, id, c.dir, c.cursor, c.limit)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		got := make([]int64, len(rows))
+		for i, row := range rows {
+			got[i] = row.Seq
+		}
+		if !slices.Equal(got, c.want) || more != c.more {
+			t.Errorf("%s = %v, more=%v; want %v, %v", c.name, got, more, c.want, c.more)
+		}
+	}
+
+	// Listing never probes existence: the handler authorizes first.
+	rows, more, err := s.List(ctx, "01900000-0000-7000-8000-000000000000", Backward, 0, 10)
+	if err != nil || len(rows) != 0 || more {
+		t.Fatalf("unknown stream = %v, %v, %v", rows, more, err)
 	}
 }

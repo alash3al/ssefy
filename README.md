@@ -87,6 +87,17 @@ Limits: 1 MiB request body · 500 events per push · 64 KiB of `data` per event 
 - `Last-Event-ID` wins over `?after`.
 - A missing or wrong token is `401`; an unknown or deleted stream is `404`. EventSource stops reconnecting on any non-200.
 
+## History
+
+`GET /v1/streams/{id}/events` pages through stored events with the same token as SSE reads. A stream can be listed with nobody listening — SSE and history are two readers over one log.
+
+- `direction` — `forward` or `backward`, default `backward`: the latest page first, walking toward older events.
+- `cursor` — a seq, exclusive. Absent starts at the beginning of the walk: the first event forward, the newest backward. Same number space as the SSE `id:`, so `Last-Event-ID` seeds it.
+- `limit` — default 50, max 200.
+- Every page is oldest→newest, in both directions. `has_more` says whether the walk continues; the next cursor is the edge seq — `last.seq` forward, `first.seq` backward.
+
+A chat opens with `?limit=50`, then pages `?cursor=<oldest seq>` as the user scrolls up. Forward `has_more:false` means caught up **as of now** — newer events may still arrive, which is the SSE connection's job (or re-poll the same cursor). Backward `has_more:false` is final. `collapse_key` can drop an event from a later re-fetch, and transient events never appear: they were never stored.
+
 ## Tokens
 
 - Stored only as a SHA-256 digest. Create and rotate return the plaintext exactly once — keep it.

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -9,7 +8,6 @@ import (
 	"time"
 
 	"github.com/alash3al/ssefy/internal/metrics"
-	"github.com/alash3al/ssefy/internal/store"
 )
 
 const (
@@ -29,12 +27,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// EventSource cannot set headers, so the query is the browser path. A
-	// header lets non-browser clients keep the token out of URLs and logs.
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		token, _ = strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	}
+	token := readToken(r)
 	if token == "" {
 		s.fail(w, http.StatusUnauthorized, "token required")
 		return
@@ -49,17 +42,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	live, unsubscribe := s.store.Live(id)
 	defer unsubscribe()
 
-	last, err := s.store.OpenReader(r.Context(), id, token)
-	if errors.Is(err, store.ErrUnauthorized) {
-		s.fail(w, http.StatusUnauthorized, "invalid token")
-		return
-	}
-	if s.failStream(w, err) {
-		return
-	}
-	if err != nil {
-		s.log.Error("open reader", "err", err)
-		s.fail(w, http.StatusInternalServerError, "store error")
+	last, ok := s.authorize(w, r, id, token)
+	if !ok {
 		return
 	}
 

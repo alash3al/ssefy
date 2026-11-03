@@ -52,12 +52,40 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/push", s.auth(s.push))
 	mux.HandleFunc("DELETE /v1/streams/{id}", s.auth(s.remove))
 	mux.HandleFunc("GET /v1/streams/{id}", s.stream)
+	mux.HandleFunc("GET /v1/streams/{id}/events", s.history)
 	mux.HandleFunc("GET /v1/streams/{id}/stat", s.auth(s.stat))
 	mux.HandleFunc("POST /v1/streams/{id}/rotate", s.auth(s.rotate))
 	mux.HandleFunc("POST /v1/streams/{id}/revoke", s.auth(s.revoke))
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", metrics.Handler())
 	return instrument(s.cors(mux))
+}
+
+// readToken picks the stream token out of a request: the query string for
+// EventSource, which cannot set headers, then the Authorization header.
+func readToken(r *http.Request) string {
+	if token := r.URL.Query().Get("token"); token != "" {
+		return token
+	}
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return token
+}
+
+// authorize answers the token check both reader endpoints share and reports
+// whether the request may continue.
+func (s *Server) authorize(w http.ResponseWriter, r *http.Request, id, token string) (int64, bool) {
+	last, err := s.store.OpenReader(r.Context(), id, token)
+	switch {
+	case errors.Is(err, store.ErrUnauthorized):
+		s.fail(w, http.StatusUnauthorized, "invalid token")
+	case s.failStream(w, err):
+	case err != nil:
+		s.log.Error("open reader", "err", err)
+		s.fail(w, http.StatusInternalServerError, "store error")
+	default:
+		return last, true
+	}
+	return 0, false
 }
 
 // failStream answers the lookup failure every stream endpoint shares.

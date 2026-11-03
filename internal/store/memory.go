@@ -133,6 +133,43 @@ func (m *memory) Read(_ context.Context, id string, after int64, limit int) ([]R
 	return out, nil
 }
 
+func (m *memory) List(_ context.Context, id string, dir Direction, cursor int64, limit int) ([]Row, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.streams[id]
+	if !ok {
+		return nil, false, nil // the handler authorizes before listing
+	}
+
+	var page []memEvent
+	more := false
+	if dir == Forward {
+		first := sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq > cursor })
+		last := first + limit
+		if last > len(s.events) {
+			last = len(s.events)
+		}
+		more = first+limit < len(s.events)
+		page = s.events[first:last]
+	} else {
+		end := len(s.events)
+		if cursor > 0 {
+			end = sort.Search(len(s.events), func(i int) bool { return s.events[i].Row.Seq >= cursor })
+		}
+		start := end - limit
+		if start < 0 {
+			start = 0
+		}
+		more = end-limit > 0
+		page = s.events[start:end] // already oldest to newest
+	}
+	var out []Row
+	for _, e := range page {
+		out = append(out, e.Row)
+	}
+	return out, more, nil
+}
+
 func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

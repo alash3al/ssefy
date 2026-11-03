@@ -1,0 +1,96 @@
+package api
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/alash3al/ssefy/internal/store"
+)
+
+// defaultPage is the listing size when the client asks for none.
+const defaultPage = 50
+
+type historyEvent struct {
+	Seq       int64     `json:"seq"`
+	Event     string    `json:"event"`
+	Data      string    `json:"data"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type historyResponse struct {
+	Events  []historyEvent `json:"events"`
+	HasMore bool           `json:"has_more"`
+}
+
+// history pages through stored events with the stream token, one bounded page
+// per call, always oldest to newest. It shares only the token with the live
+// path: a stream can be listed with nobody listening.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	token := readToken(r)
+	if token == "" {
+		s.fail(w, http.StatusUnauthorized, "token required")
+		return
+	}
+	dir, cursor, limit, err := parseHistory(r.URL.Query())
+	if err != nil {
+		s.fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, ok := s.authorize(w, r, r.PathValue("id"), token); !ok {
+		return
+	}
+
+	rows, more, err := s.store.List(r.Context(), r.PathValue("id"), dir, cursor, limit)
+	if err != nil {
+		s.log.Error("list events", "err", err)
+		s.fail(w, http.StatusInternalServerError, "store error")
+		return
+	}
+	// Never nil: an empty page must render as [], not null.
+	events := make([]historyEvent, 0, len(rows))
+	for _, row := range rows {
+		events = append(events, historyEvent{
+			Seq:       row.Seq,
+			Event:     row.Event,
+			Data:      row.Data,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, historyResponse{Events: events, HasMore: more})
+}
+
+// parseHistory validates the listing query: a direction, an exclusive cursor
+// and a bounded limit. The page bound matches the SSE replay page.
+func parseHistory(q url.Values) (store.Direction, int64, int, error) {
+	dir := store.Backward
+	switch q.Get("direction") {
+	case "", "backward":
+	case "forward":
+		dir = store.Forward
+	default:
+		return 0, 0, 0, errors.New("invalid direction")
+	}
+
+	var cursor int64
+	if raw := q.Get("cursor"); raw != "" {
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
+			return 0, 0, 0, errors.New("invalid cursor")
+		}
+		cursor = n
+	}
+
+	limit := defaultPage
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > pageSize {
+			return 0, 0, 0, fmt.Errorf("limit must be 1 to %d", pageSize)
+		}
+		limit = n
+	}
+	return dir, cursor, limit, nil
+}

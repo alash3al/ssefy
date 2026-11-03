@@ -263,6 +263,45 @@ func (p *postgres) Read(ctx context.Context, id string, after int64, limit int) 
 	return nil, err
 }
 
+func (p *postgres) List(ctx context.Context, id string, dir Direction, cursor int64, limit int) ([]Row, bool, error) {
+	// One extra row decides has_more without counting, which would lie under
+	// concurrent appends anyway.
+	const forward = `SELECT seq, event, data, created_at FROM ssefy_events
+		WHERE stream_id = $1 AND seq > $2 ORDER BY seq ASC LIMIT $3`
+	const backward = `SELECT seq, event, data, created_at FROM ssefy_events
+		WHERE stream_id = $1 AND seq < $2 ORDER BY seq DESC LIMIT $3`
+	const newest = `SELECT seq, event, data, created_at FROM ssefy_events
+		WHERE stream_id = $1 ORDER BY seq DESC LIMIT $2`
+
+	query, args := forward, []any{id, cursor, limit + 1}
+	switch {
+	case dir == Backward && cursor > 0:
+		query, args = backward, []any{id, cursor, limit + 1}
+	case dir == Backward:
+		query, args = newest, []any{id, limit + 1}
+	}
+
+	rows, err := p.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := pgx.CollectRows(rows, pgx.RowToStructByName[Row])
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(out) > limit
+	if more {
+		out = out[:limit]
+	}
+	if dir == Backward {
+		// Fetched newest first; pages are always oldest to newest.
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	return out, more, nil
+}
+
 func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, error) {
 	var n int64
 	var stored *string
