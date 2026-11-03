@@ -29,7 +29,12 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// EventSource cannot set headers, so the query is the browser path. A
+	// header lets non-browser clients keep the token out of URLs and logs.
 	token := r.URL.Query().Get("token")
+	if token == "" {
+		token, _ = strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
 	if token == "" {
 		s.fail(w, http.StatusUnauthorized, "token required")
 		return

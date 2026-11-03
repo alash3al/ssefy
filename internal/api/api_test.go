@@ -438,6 +438,16 @@ func TestReaderTokens(t *testing.T) {
 		t.Fatalf("wrong token = %d", resp.StatusCode)
 	}
 
+	// Non-browser clients may send the token as a bearer credential instead.
+	head := r.do("GET", "/v1/streams/"+id, "", map[string]string{"Authorization": "Bearer " + token})
+	if head.StatusCode != http.StatusOK {
+		t.Fatalf("token header = %d", head.StatusCode)
+	}
+	_ = head.Body.Close()
+	if resp := r.do("GET", "/v1/streams/"+id, "", map[string]string{"Authorization": "Bearer wrong"}); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong token header = %d", resp.StatusCode)
+	}
+
 	resp, br, cancel := openStream(t, r.streamURL(id, token, "0"), nil)
 	defer cancel()
 	defer closeBody(resp)

@@ -30,6 +30,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown, `410` deleted |
 | `GET /v1/streams/{id}?token=…` | Stream token | SSE: replays, then streams live. `401` no token, `404` wrong token or unknown, `410` deleted |
+| `GET /v1/streams/{id}` | Stream token | Same endpoint; the token may be `Authorization: Bearer <token>` instead of `?token=` |
 | `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
 | `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","deleted_at","readable"}`, `404` unknown |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |
@@ -37,7 +38,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `GET /healthz` | Open | `200` when the store answers and notifications flow; `503` otherwise |
 | `GET /metrics` | Open | Prometheus text for this node |
 
-An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token, which the browser passes as `?token=` because EventSource cannot set headers. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
+An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token. EventSource cannot set headers, so browsers pass it as `?token=`; any other client may send `Authorization: Bearer <token>` instead. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
 
 Rotate and revoke drop every reader, exactly like delete. EventSource cannot change its URL, so the host has to reopen it with the new token; the reconnect gets `404` after rotate/revoke and `410` after delete.
 
