@@ -147,15 +147,21 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 	idemHash := ""
 	if idemKey != "" {
 		idemHash = hashEvents(events)
-		seqs, stored, err := idemSeqs(ctx, tx, id, idemKey)
-		if err != nil {
-			return nil, err
-		}
-		if len(seqs) > 0 {
-			if stored != idemHash {
+		var storedHash string
+		var storedSeqs []int64
+		err := tx.QueryRow(ctx,
+			"SELECT hash, seqs FROM ssefy_appends WHERE stream_id = $1 AND key = $2",
+			id, idemKey).Scan(&storedHash, &storedSeqs)
+		switch {
+		case err == nil:
+			if storedHash != idemHash {
 				return nil, ErrKeyMismatch
 			}
-			return seqs, nil
+			return storedSeqs, nil
+		case errors.Is(err, pgx.ErrNoRows):
+			// first push
+		default:
+			return nil, err
 		}
 	}
 
@@ -170,9 +176,9 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 	for i, ev := range events {
 		seqs[i] = last + int64(i) + 1
 		batch.Queue(`INSERT INTO ssefy_events
-			(stream_id, seq, event, data, collapse_key, idempotency_key, idempotency_hash)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, seqs[i], ev.Event, ev.Data, nullString(ev.CollapseKey), nullString(idemKey), nullString(idemHash))
+			(stream_id, seq, event, data, collapse_key)
+			VALUES ($1, $2, $3, $4, $5)`,
+			id, seqs[i], ev.Event, ev.Data, nullString(ev.CollapseKey))
 	}
 	results := tx.SendBatch(ctx, batch)
 	for range events {
@@ -183,6 +189,14 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 	}
 	if err := results.Close(); err != nil {
 		return nil, err
+	}
+
+	if idemKey != "" {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO ssefy_appends (stream_id, key, hash, seqs) VALUES ($1, $2, $3, $4)",
+			id, idemKey, idemHash, seqs); err != nil {
+			return nil, err
+		}
 	}
 
 	newLast := last + int64(len(events))
@@ -299,27 +313,6 @@ func (p *postgres) Close() error {
 	p.cancel()
 	p.pool.Close()
 	return nil
-}
-
-func idemSeqs(ctx context.Context, tx pgx.Tx, id, key string) ([]int64, string, error) {
-	rows, err := tx.Query(ctx,
-		"SELECT seq, idempotency_hash FROM ssefy_events WHERE stream_id = $1 AND idempotency_key = $2 ORDER BY seq",
-		id, key)
-	if err != nil {
-		return nil, "", err
-	}
-	defer rows.Close()
-
-	var seqs []int64
-	var hash string
-	for rows.Next() {
-		var seq int64
-		if err := rows.Scan(&seq, &hash); err != nil {
-			return nil, "", err
-		}
-		seqs = append(seqs, seq)
-	}
-	return seqs, hash, rows.Err()
 }
 
 func collapseKeys(events []Event) []string {

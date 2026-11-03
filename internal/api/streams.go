@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/alash3al/ssefy/internal/store"
@@ -138,8 +139,8 @@ func validate(events []store.Event, idemKey string) error {
 				return errors.New("event name contains control characters")
 			}
 		}
-		if !utf8.ValidString(ev.Data) {
-			return errors.New("data is not valid UTF-8")
+		if !utf8.ValidString(ev.Data) || strings.IndexByte(ev.Data, 0) >= 0 {
+			return errors.New("data is not valid text")
 		}
 		if len(ev.Data) > maxData {
 			return fmt.Errorf("data longer than %d bytes", maxData)

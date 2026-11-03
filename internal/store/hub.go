@@ -39,10 +39,26 @@ func (h *hub) notify(stream string, n Notice) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.m[stream] {
-		select {
-		case ch <- n:
-		default: // full: the reader re-reads from the store anyway
+		if !push(ch, n) {
+			// A stored wake-up must not be lost. End the slow reader so it
+			// reconnects with Last-Event-ID and catches up from the store.
+			delete(h.m[stream], ch)
+			close(ch)
 		}
+	}
+	if len(h.m[stream]) == 0 {
+		delete(h.m, stream)
+	}
+}
+
+// push reports whether the subscriber should stay. Only a transient notice may
+// be dropped: it has no stored copy to fall back to.
+func push(ch chan Notice, n Notice) bool {
+	select {
+	case ch <- n:
+		return true
+	default:
+		return n.Transient
 	}
 }
 
@@ -61,12 +77,15 @@ func (h *hub) close(stream string) {
 func (h *hub) broadcast() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, chans := range h.m {
+	for stream, chans := range h.m {
 		for ch := range chans {
-			select {
-			case ch <- Notice{}:
-			default:
+			if !push(ch, Notice{}) {
+				delete(chans, ch)
+				close(ch)
 			}
+		}
+		if len(chans) == 0 {
+			delete(h.m, stream)
 		}
 	}
 }

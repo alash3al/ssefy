@@ -48,6 +48,7 @@ func main() {
 		Addr:              cfg.Listen,
 		Handler:           a.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
 	srv.RegisterOnShutdown(a.Close) // end open SSE streams so Shutdown can finish

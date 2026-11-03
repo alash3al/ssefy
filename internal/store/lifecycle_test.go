@@ -67,6 +67,38 @@ func testLifecycle(t *testing.T, s Store) {
 		t.Fatalf("mismatch err = %v", err)
 	}
 
+	// An array push with one key works and replays the same seqs.
+	batch := []Event{{Event: "message", Data: "m1"}, {Event: "message", Data: "m2"}}
+	firstSeqs, err := s.Append(ctx, id, batch, "multi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstSeqs) != 2 || firstSeqs[1] != firstSeqs[0]+1 {
+		t.Fatalf("batch seqs = %v", firstSeqs)
+	}
+	againSeqs, err := s.Append(ctx, id, batch, "multi")
+	if err != nil || len(againSeqs) != 2 || againSeqs[0] != firstSeqs[0] {
+		t.Fatalf("batch retry = %v, %v", againSeqs, err)
+	}
+
+	// Collapsing an event away must not erase its idempotency record.
+	lastBefore, _ := s.LastSeq(ctx, id)
+	keyed := []Event{{Event: "presence", Data: "first", CollapseKey: "cz"}}
+	keyedSeqs, err := s.Append(ctx, id, keyed, "collapse-keyed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(ctx, id, []Event{{Event: "presence", Data: "second", CollapseKey: "cz"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	retrySeqs, err := s.Append(ctx, id, keyed, "collapse-keyed")
+	if err != nil || len(retrySeqs) != 1 || retrySeqs[0] != keyedSeqs[0] {
+		t.Fatalf("collapse retry = %v, %v", retrySeqs, err)
+	}
+	if last, _ := s.LastSeq(ctx, id); last != lastBefore+2 {
+		t.Fatalf("collapse retry inserted: last = %d, want %d", last, lastBefore+2)
+	}
+
 	// Collapse keeps the newest event with a key.
 	if _, err := s.Append(ctx, id, []Event{{Event: "state", Data: "a", CollapseKey: "c"}}, ""); err != nil {
 		t.Fatal(err)
