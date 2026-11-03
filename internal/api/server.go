@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/streams", s.auth(s.create))
 	mux.HandleFunc("POST /v1/streams/{id}", s.auth(s.append))
+	mux.HandleFunc("POST /v1/push", s.auth(s.push))
 	mux.HandleFunc("DELETE /v1/streams/{id}", s.auth(s.remove))
 	mux.HandleFunc("GET /v1/streams/{id}", s.stream)
 	mux.HandleFunc("GET /v1/streams/{id}/stat", s.auth(s.stat))

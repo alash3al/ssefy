@@ -29,6 +29,7 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | --- | --- | --- |
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown or deleted |
+| `POST /v1/push` | Server secret | Appends the same events to up to 100 streams in one call |
 | `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown or deleted |
 | `DELETE /v1/streams/{id}` | Server secret | Removes the stream and its events. `204`, also for an unknown id |
 | `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}`, `404` unknown or deleted |
@@ -38,6 +39,8 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `GET /metrics` | Open | Prometheus text for this node |
 
 An id is a time-sortable UUIDv7 and only an address. Reads need the stream's 128-bit token. EventSource cannot set headers, so browsers pass it as `?token=`; any other client may send `Authorization: Bearer <token>` instead. The token is a bearer secret and rides in the URL, so it lands in proxy access logs — strip query strings there or accept it.
+
+`POST /v1/push` takes `{"streams":[…],"events":…}` and returns `{"results":{"<id>":{"seqs":[…]} | {"error":"…"}}}`. Streams are appended independently: one failure does not undo the others, so read the results. A retry with the same `Idempotency-Key` returns the original seqs for the streams that already succeeded and appends to the rest. Duplicate ids in one call are rejected.
 
 Rotate, revoke and delete drop every reader. EventSource cannot change its URL, so after a rotate the host has to reopen it with the new token. Every reconnect without a working token gets `404`.
 
