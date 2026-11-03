@@ -15,7 +15,7 @@ type memory struct {
 }
 
 type memStream struct {
-	token     string
+	tokenHash string
 	lastSeq   int64
 	createdAt time.Time
 	events    []memEvent
@@ -43,7 +43,7 @@ func (m *memory) Create(context.Context) (string, string, error) {
 	}
 	m.mu.Lock()
 	m.streams[id] = &memStream{
-		token:     token,
+		tokenHash: hashToken(token),
 		createdAt: time.Now(),
 		idem:      make(map[string][]int64),
 	}
@@ -140,7 +140,7 @@ func (m *memory) OpenReader(_ context.Context, id, token string) (int64, error) 
 	if !ok {
 		return 0, ErrNotFound
 	}
-	if token == "" || !sameToken(s.token, token) {
+	if token == "" || !sameToken(s.tokenHash, hashToken(token)) {
 		return 0, ErrUnauthorized
 	}
 	return s.lastSeq, nil
@@ -157,7 +157,7 @@ func (m *memory) Rotate(_ context.Context, id string) (string, error) {
 		m.mu.Unlock()
 		return "", ErrNotFound
 	}
-	s.token = token
+	s.tokenHash = hashToken(token)
 	m.mu.Unlock()
 	m.hub.close(id)
 	return token, nil
@@ -170,7 +170,7 @@ func (m *memory) Revoke(_ context.Context, id string) error {
 		m.mu.Unlock()
 		return ErrNotFound
 	}
-	s.token = ""
+	s.tokenHash = ""
 	m.mu.Unlock()
 	m.hub.close(id)
 	return nil
@@ -186,7 +186,7 @@ func (m *memory) Stat(_ context.Context, id string) (Stat, error) {
 	return Stat{
 		LastSeq:   s.lastSeq,
 		CreatedAt: s.createdAt,
-		Readable:  s.token != "",
+		Readable:  s.tokenHash != "",
 	}, nil
 }
 

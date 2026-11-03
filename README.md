@@ -30,8 +30,8 @@ TLS is not handled here: terminate it at the proxy and point it at this port.
 | `POST /v1/streams` | Server secret | Creates a stream. `201 {"id":"…","token":"…"}` |
 | `POST /v1/streams/{id}` | Server secret | Appends one event or an array. `{"seqs":[...]}`, `404` unknown or deleted |
 | `GET /v1/streams/{id}` | Stream token | SSE: replays, then streams live. Token in `?token=` or `Authorization: Bearer`. `401` no token or wrong token, `404` unknown or deleted |
-| `DELETE /v1/streams/{id}` | Server secret | Deletes the stream and its events. `204` |
-| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","deleted_at","readable"}`, `404` unknown |
+| `DELETE /v1/streams/{id}` | Server secret | Removes the stream and its events. `204`, also for an unknown id |
+| `GET /v1/streams/{id}/stat` | Server secret | `{"last_seq","created_at","readable"}`, `404` unknown or deleted |
 | `POST /v1/streams/{id}/rotate` | Server secret | Mints a new token, closes readers. `200 {"token":"…"}` |
 | `POST /v1/streams/{id}/revoke` | Server secret | Clears the token, closes readers. `204` |
 | `GET /healthz` | Open | `200` when the store answers and notifications flow; `503` otherwise |

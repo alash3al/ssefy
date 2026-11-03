@@ -95,7 +95,7 @@ func (p *postgres) Create(ctx context.Context) (string, string, error) {
 		if err != nil {
 			return "", "", err
 		}
-		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id, token) VALUES ($1, $2)", id, token)
+		_, err = p.pool.Exec(ctx, "INSERT INTO ssefy_streams (id, token_hash) VALUES ($1, $2)", id, hashToken(token))
 		if err == nil {
 			return id, token, nil
 		}
@@ -194,13 +194,17 @@ func (p *postgres) Append(ctx context.Context, id string, events []Event, idemKe
 }
 
 func (p *postgres) appendTransient(ctx context.Context, id string, events []Event) error {
-	payloads, err := encodeTransients(id, events)
+	// Existence first, so an unknown id and a too-large payload are ordered
+	// the same way in both stores.
+	var one int
+	err := p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
-
-	var one int
-	err = p.pool.QueryRow(ctx, "SELECT 1 FROM ssefy_streams WHERE id = $1", id).Scan(&one)
+	payloads, err := encodeTransients(id, events)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -263,7 +267,7 @@ func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, err
 	var n int64
 	var stored *string
 	err := p.pool.QueryRow(ctx,
-		"SELECT last_seq, token FROM ssefy_streams WHERE id = $1",
+		"SELECT last_seq, token_hash FROM ssefy_streams WHERE id = $1",
 		id).Scan(&n, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrNotFound
@@ -271,7 +275,7 @@ func (p *postgres) OpenReader(ctx context.Context, id, token string) (int64, err
 	if err != nil {
 		return 0, err
 	}
-	if token == "" || stored == nil || !sameToken(*stored, token) {
+	if token == "" || stored == nil || !sameToken(*stored, hashToken(token)) {
 		return 0, ErrUnauthorized
 	}
 	return n, nil
@@ -288,7 +292,7 @@ func (p *postgres) Rotate(ctx context.Context, id string) (string, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = $2 WHERE id = $1", id, token)
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token_hash = $2 WHERE id = $1", id, hashToken(token))
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +315,7 @@ func (p *postgres) Revoke(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token = NULL WHERE id = $1", id)
+	tag, err := tx.Exec(ctx, "UPDATE ssefy_streams SET token_hash = NULL WHERE id = $1", id)
 	if err != nil {
 		return err
 	}
@@ -328,7 +332,7 @@ func (p *postgres) Stat(ctx context.Context, id string) (Stat, error) {
 	var st Stat
 	var hasToken bool
 	err := p.pool.QueryRow(ctx,
-		"SELECT last_seq, created_at, token IS NOT NULL FROM ssefy_streams WHERE id = $1",
+		"SELECT last_seq, created_at, token_hash IS NOT NULL FROM ssefy_streams WHERE id = $1",
 		id).Scan(&st.LastSeq, &st.CreatedAt, &hasToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Stat{}, ErrNotFound

@@ -135,9 +135,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 	// Replay, then go live.
 	if err := drain(); err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			s.log.Debug("replay", "err", err)
-		}
+		s.logStreamErr(err)
 		return
 	}
 	following = true
@@ -164,12 +162,15 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if err := drain(); err != nil {
-				if !errors.Is(err, store.ErrNotFound) {
-					s.log.Debug("live", "err", err)
-				}
+				s.logStreamErr(err)
 				return
 			}
 		case <-ping.C:
+			// A close notice lost during a listener outage must not outlive
+			// this tick: one primary-key read per connection re-authorizes.
+			if _, err := s.store.OpenReader(r.Context(), id, token); err != nil {
+				return
+			}
 			if err := rc.SetWriteDeadline(time.Now().Add(writeWindow)); err != nil {
 				return
 			}

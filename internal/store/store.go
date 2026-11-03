@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
@@ -55,7 +56,8 @@ type Notice struct {
 // Store persists streams and wakes local readers. Append requires validated,
 // non-empty events; seqs are per stream, assigned in commit order, never reused.
 type Store interface {
-	// Create mints a stream and the token that opens its reads.
+	// Create mints a stream and the token that opens its reads. Tokens are
+	// stored only as a SHA-256 digest; the plaintext is returned once.
 	Create(ctx context.Context) (id, token string, err error)
 	// Append stores events and returns their seqs.
 	Append(ctx context.Context, stream string, events []Event, idemKey string) ([]int64, error)
@@ -80,7 +82,14 @@ type Store interface {
 	Close() error
 }
 
-// sameToken compares two read tokens without an early exit.
+// hashToken is how a token is stored: the same string hashes to the same
+// digest, so a database read alone never yields a usable token.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// sameToken compares two digests without an early exit.
 func sameToken(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

@@ -68,6 +68,15 @@ func (s *Server) failStream(w http.ResponseWriter, err error) bool {
 	return false
 }
 
+// logStreamErr logs a store failure inside a live stream at a level that
+// matches its importance: a deleted stream or a leaving reader is normal.
+func (s *Server) logStreamErr(err error) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	s.log.Warn("stream store error", "err", err)
+}
+
 // instrument records every request, including CORS preflights. For a stream
 // the duration is the life of the connection.
 func instrument(next http.Handler) http.Handler {
